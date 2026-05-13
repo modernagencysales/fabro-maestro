@@ -55,8 +55,8 @@ async fn run_hooks(
 fn git_setup_intent(run_options: &RunOptions) -> GitSetupIntent {
     if let Some(source) = run_options.fork_source_ref.as_ref() {
         GitSetupIntent::ForkFromCheckpoint {
-            new_run_id:     run_options.run_id.to_string(),
-            source_run_id:  source.source_run_id.to_string(),
+            new_run_id: run_options.run_id.to_string(),
+            source_run_id: source.source_run_id.to_string(),
             checkpoint_sha: source.checkpoint_sha.clone(),
         }
     } else {
@@ -69,9 +69,10 @@ fn git_setup_intent(run_options: &RunOptions) -> GitSetupIntent {
 fn build_sandbox_env(
     spec: &SandboxEnvSpec,
     github_app: Option<&fabro_github::GitHubCredentials>,
+    vault_env: Option<&HashMap<String, String>>,
 ) -> Result<BuiltSandboxEnv, Error> {
     let mut env = spec.devcontainer_env.clone();
-    env.extend(spec.toml_env.clone());
+    env.extend(resolve_sandbox_toml_env(&spec.toml_env, vault_env)?);
 
     let Some(permissions) = spec.github_permissions.as_ref().filter(|p| !p.is_empty()) else {
         return Ok((env, None));
@@ -114,6 +115,33 @@ fn build_sandbox_env(
     };
 
     Ok((env, source))
+}
+
+fn resolve_sandbox_toml_env(
+    toml_env: &HashMap<String, String>,
+    vault_env: Option<&HashMap<String, String>>,
+) -> Result<HashMap<String, String>, Error> {
+    toml_env
+        .iter()
+        .map(|(key, value)| {
+            let value = if let Some(secret_name) = sandbox_secret_ref(value) {
+                let Some(secret_value) = vault_env.and_then(|env| env.get(secret_name)) else {
+                    return Err(Error::engine(format!(
+                        "sandbox env {key} references missing server secret {secret_name}"
+                    )));
+                };
+                secret_value.clone()
+            } else {
+                value.clone()
+            };
+            Ok((key.clone(), value))
+        })
+        .collect()
+}
+
+fn sandbox_secret_ref(value: &str) -> Option<&str> {
+    let inner = value.trim().strip_prefix("${{")?.strip_suffix("}}")?.trim();
+    inner.strip_prefix("secrets.").map(str::trim)
 }
 
 async fn build_registry(
@@ -471,20 +499,25 @@ pub async fn initialize(
             .ok_or_else(|| Error::engine("initialized sandbox missing runtime metadata"))?;
         options.emitter.emit(&Event::SandboxInitialized {
             working_directory: runtime.working_directory.clone(),
-            provider:          run_sandbox.provider,
-            id:                runtime.id.clone(),
-            repo_cloned:       runtime.repo_cloned,
-            clone_origin_url:  runtime.clone_origin_url.clone(),
-            clone_branch:      runtime.clone_branch.clone(),
+            provider: run_sandbox.provider,
+            id: runtime.id.clone(),
+            repo_cloned: runtime.repo_cloned,
+            clone_origin_url: runtime.clone_origin_url.clone(),
+            clone_branch: runtime.clone_branch.clone(),
         });
     }
 
+    let vault_env = match options.vault.as_ref() {
+        Some(vault) => Some(vault.read().await.snapshot()),
+        None => None,
+    };
     let (base_env, github_token) = build_sandbox_env(
         &options.sandbox_env,
         options.run_options.github_app.as_ref(),
+        vault_env.as_ref(),
     )?;
     let tool_env_provider = Arc::new(WorkflowToolEnvProvider {
-        base_env:     base_env.clone(),
+        base_env: base_env.clone(),
         github_token: github_token.clone(),
     });
     let github_token_refresh_managed = github_token
@@ -784,19 +817,80 @@ mod tests {
 
     fn test_settings(run_dir: &std::path::Path) -> RunOptions {
         RunOptions {
-            settings:         WorkflowSettings::default(),
-            run_dir:          run_dir.to_path_buf(),
-            cancel_token:     tokio_util::sync::CancellationToken::new(),
-            run_id:           test_run_id(),
-            labels:           HashMap::new(),
-            workflow_slug:    None,
-            github_app:       None,
-            pre_run_git:      None,
-            fork_source_ref:  None,
-            base_branch:      None,
+            settings: WorkflowSettings::default(),
+            run_dir: run_dir.to_path_buf(),
+            cancel_token: tokio_util::sync::CancellationToken::new(),
+            run_id: test_run_id(),
+            labels: HashMap::new(),
+            workflow_slug: None,
+            github_app: None,
+            pre_run_git: None,
+            fork_source_ref: None,
+            base_branch: None,
             display_base_sha: None,
-            git:              None,
+            git: None,
         }
+    }
+
+    #[test]
+    fn sandbox_secret_ref_parses_server_secret_template() {
+        assert_eq!(
+            sandbox_secret_ref("${{ secrets.OPENROUTER_API_KEY }}"),
+            Some("OPENROUTER_API_KEY")
+        );
+        assert_eq!(sandbox_secret_ref("literal"), None);
+    }
+
+    #[test]
+    fn build_sandbox_env_resolves_vault_secret_refs() {
+        let spec = SandboxEnvSpec {
+            devcontainer_env: HashMap::from([("BASE".to_string(), "base".to_string())]),
+            toml_env: HashMap::from([
+                (
+                    "OPENROUTER_API_KEY".to_string(),
+                    "${{ secrets.OPENROUTER_API_KEY }}".to_string(),
+                ),
+                ("STATIC_VALUE".to_string(), "static".to_string()),
+            ]),
+            github_permissions: None,
+            origin_url: None,
+        };
+        let vault_env =
+            HashMap::from([("OPENROUTER_API_KEY".to_string(), "resolved-key".to_string())]);
+
+        let (env, github_token) = build_sandbox_env(&spec, None, Some(&vault_env)).unwrap();
+
+        assert_eq!(env.get("BASE").map(String::as_str), Some("base"));
+        assert_eq!(
+            env.get("OPENROUTER_API_KEY").map(String::as_str),
+            Some("resolved-key")
+        );
+        assert_eq!(env.get("STATIC_VALUE").map(String::as_str), Some("static"));
+        assert!(github_token.is_none());
+    }
+
+    #[test]
+    fn build_sandbox_env_errors_on_missing_secret_ref() {
+        let spec = SandboxEnvSpec {
+            devcontainer_env: HashMap::new(),
+            toml_env: HashMap::from([(
+                "APIFY_TOKEN".to_string(),
+                "${{ secrets.APIFY_TOKEN }}".to_string(),
+            )]),
+            github_permissions: None,
+            origin_url: None,
+        };
+
+        let err = match build_sandbox_env(&spec, None, Some(&HashMap::new())) {
+            Ok(_) => panic!("expected missing secret reference to fail"),
+            Err(err) => err,
+        };
+
+        assert!(
+            err.to_string()
+                .contains("missing server secret APIFY_TOKEN"),
+            "{err}"
+        );
     }
 
     fn test_persisted(graph: Graph, source: String, run_dir: &std::path::Path) -> Persisted {
@@ -813,10 +907,10 @@ mod tests {
                 workflow_slug: Some("test".to_string()),
                 source_directory: Some(std::env::current_dir().unwrap().display().to_string()),
                 git: Some(fabro_types::GitContext {
-                    origin_url:   String::new(),
-                    branch:       "main".to_string(),
-                    sha:          None,
-                    dirty:        fabro_types::DirtyStatus::Clean,
+                    origin_url: String::new(),
+                    branch: "main".to_string(),
+                    sha: None,
+                    dirty: fabro_types::DirtyStatus::Clean,
                     push_outcome: fabro_types::PreRunPushOutcome::NotAttempted,
                 }),
                 labels: HashMap::new(),
@@ -843,51 +937,54 @@ mod tests {
             move |event| seen.lock().unwrap().push(event.clone())
         });
 
-        let result = initialize(persisted, InitOptions {
-            run_id:            test_run_id(),
-            run_store:         {
-                let store = memory_store();
-                let inner = store.create_run(&test_run_id()).await.unwrap();
-                inner.into()
+        let result = initialize(
+            persisted,
+            InitOptions {
+                run_id: test_run_id(),
+                run_store: {
+                    let store = memory_store();
+                    let inner = store.create_run(&test_run_id()).await.unwrap();
+                    inner.into()
+                },
+                dry_run: false,
+                emitter: emitter.clone(),
+                sandbox: SandboxSpec::Local {
+                    working_directory: std::env::current_dir().unwrap(),
+                },
+                llm: LlmSpec {
+                    model: "test-model".to_string(),
+                    provider: fabro_llm::Provider::Anthropic,
+                    fallback_chain: Vec::new(),
+                    mcp_servers: Vec::new(),
+                    dry_run: true,
+                },
+                interviewer: Arc::new(AutoApproveInterviewer::engine()),
+                steering_hub: Arc::new(crate::steering_hub::SteeringHub::new(emitter.clone())),
+                lifecycle: crate::run_options::LifecycleOptions {
+                    setup_commands: vec![command.to_string()],
+                    setup_command_timeout_ms: 1_000,
+                    devcontainer_phases: vec![],
+                },
+                run_options: test_settings(&run_dir),
+                workflow_path: None,
+                workflow_bundle: None,
+                hooks: fabro_hooks::HookSettings { hooks: vec![] },
+                sandbox_env: SandboxEnvSpec {
+                    devcontainer_env: HashMap::new(),
+                    toml_env: HashMap::new(),
+                    github_permissions: None,
+                    origin_url: None,
+                },
+                vault: None,
+                devcontainer: None,
+                git: None,
+                run_control: None,
+                registry_override: None,
+                artifact_sink: None,
+                checkpoint: None,
+                seed_context: None,
             },
-            dry_run:           false,
-            emitter:           emitter.clone(),
-            sandbox:           SandboxSpec::Local {
-                working_directory: std::env::current_dir().unwrap(),
-            },
-            llm:               LlmSpec {
-                model:          "test-model".to_string(),
-                provider:       fabro_llm::Provider::Anthropic,
-                fallback_chain: Vec::new(),
-                mcp_servers:    Vec::new(),
-                dry_run:        true,
-            },
-            interviewer:       Arc::new(AutoApproveInterviewer::engine()),
-            steering_hub:      Arc::new(crate::steering_hub::SteeringHub::new(emitter.clone())),
-            lifecycle:         crate::run_options::LifecycleOptions {
-                setup_commands:           vec![command.to_string()],
-                setup_command_timeout_ms: 1_000,
-                devcontainer_phases:      vec![],
-            },
-            run_options:       test_settings(&run_dir),
-            workflow_path:     None,
-            workflow_bundle:   None,
-            hooks:             fabro_hooks::HookSettings { hooks: vec![] },
-            sandbox_env:       SandboxEnvSpec {
-                devcontainer_env:   HashMap::new(),
-                toml_env:           HashMap::new(),
-                github_permissions: None,
-                origin_url:         None,
-            },
-            vault:             None,
-            devcontainer:      None,
-            git:               None,
-            run_control:       None,
-            registry_override: None,
-            artifact_sink:     None,
-            checkpoint:        None,
-            seed_context:      None,
-        })
+        )
         .await;
         let events = seen.lock().unwrap().clone();
         (result, events)
@@ -902,51 +999,54 @@ mod tests {
         let persisted = test_persisted(graph, source.clone(), &run_dir);
         let emitter = Arc::new(crate::event::Emitter::new(test_run_id()));
 
-        let initialized = initialize(persisted, InitOptions {
-            run_id:            test_run_id(),
-            run_store:         {
-                let store = memory_store();
-                let inner = store.create_run(&test_run_id()).await.unwrap();
-                inner.into()
+        let initialized = initialize(
+            persisted,
+            InitOptions {
+                run_id: test_run_id(),
+                run_store: {
+                    let store = memory_store();
+                    let inner = store.create_run(&test_run_id()).await.unwrap();
+                    inner.into()
+                },
+                dry_run: false,
+                emitter: emitter.clone(),
+                sandbox: SandboxSpec::Local {
+                    working_directory: std::env::current_dir().unwrap(),
+                },
+                llm: LlmSpec {
+                    model: "test-model".to_string(),
+                    provider: fabro_llm::Provider::Anthropic,
+                    fallback_chain: Vec::new(),
+                    mcp_servers: Vec::new(),
+                    dry_run: true,
+                },
+                interviewer: Arc::new(AutoApproveInterviewer::engine()),
+                steering_hub: Arc::new(crate::steering_hub::SteeringHub::new(emitter.clone())),
+                lifecycle: crate::run_options::LifecycleOptions {
+                    setup_commands: vec![],
+                    setup_command_timeout_ms: 1_000,
+                    devcontainer_phases: vec![],
+                },
+                run_options: test_settings(&run_dir),
+                workflow_path: None,
+                workflow_bundle: None,
+                hooks: fabro_hooks::HookSettings { hooks: vec![] },
+                sandbox_env: SandboxEnvSpec {
+                    devcontainer_env: HashMap::new(),
+                    toml_env: HashMap::from([("TEST_KEY".to_string(), "value".to_string())]),
+                    github_permissions: None,
+                    origin_url: None,
+                },
+                vault: None,
+                devcontainer: None,
+                git: None,
+                run_control: None,
+                registry_override: None,
+                artifact_sink: None,
+                checkpoint: None,
+                seed_context: None,
             },
-            dry_run:           false,
-            emitter:           emitter.clone(),
-            sandbox:           SandboxSpec::Local {
-                working_directory: std::env::current_dir().unwrap(),
-            },
-            llm:               LlmSpec {
-                model:          "test-model".to_string(),
-                provider:       fabro_llm::Provider::Anthropic,
-                fallback_chain: Vec::new(),
-                mcp_servers:    Vec::new(),
-                dry_run:        true,
-            },
-            interviewer:       Arc::new(AutoApproveInterviewer::engine()),
-            steering_hub:      Arc::new(crate::steering_hub::SteeringHub::new(emitter.clone())),
-            lifecycle:         crate::run_options::LifecycleOptions {
-                setup_commands:           vec![],
-                setup_command_timeout_ms: 1_000,
-                devcontainer_phases:      vec![],
-            },
-            run_options:       test_settings(&run_dir),
-            workflow_path:     None,
-            workflow_bundle:   None,
-            hooks:             fabro_hooks::HookSettings { hooks: vec![] },
-            sandbox_env:       SandboxEnvSpec {
-                devcontainer_env:   HashMap::new(),
-                toml_env:           HashMap::from([("TEST_KEY".to_string(), "value".to_string())]),
-                github_permissions: None,
-                origin_url:         None,
-            },
-            vault:             None,
-            devcontainer:      None,
-            git:               None,
-            run_control:       None,
-            registry_override: None,
-            artifact_sink:     None,
-            checkpoint:        None,
-            seed_context:      None,
-        })
+        )
         .await
         .unwrap();
 
@@ -989,7 +1089,7 @@ mod tests {
                 "anthropic",
                 &serde_json::to_string(&AuthCredential {
                     provider: fabro_llm::Provider::Anthropic,
-                    details:  AuthDetails::ApiKey {
+                    details: AuthDetails::ApiKey {
                         key: "anthropic-key".to_string(),
                     },
                 })
@@ -1003,16 +1103,16 @@ mod tests {
 
         let test_emitter = Arc::new(crate::event::Emitter::new(test_run_id()));
         let tool_env_provider = Arc::new(WorkflowToolEnvProvider {
-            base_env:     HashMap::new(),
+            base_env: HashMap::new(),
             github_token: None,
         });
         let (_registry, effective_dry_run) = build_registry(
             &LlmSpec {
-                model:          "claude-opus-4-6".to_string(),
-                provider:       fabro_llm::Provider::Anthropic,
+                model: "claude-opus-4-6".to_string(),
+                provider: fabro_llm::Provider::Anthropic,
                 fallback_chain: Vec::new(),
-                mcp_servers:    Vec::new(),
-                dry_run:        false,
+                mcp_servers: Vec::new(),
+                dry_run: false,
             },
             Arc::new(AutoApproveInterviewer::engine()),
             Arc::new(crate::steering_hub::SteeringHub::new(test_emitter)),
@@ -1095,7 +1195,7 @@ mod tests {
                 "openai",
                 &serde_json::to_string(&AuthCredential {
                     provider: fabro_llm::Provider::OpenAi,
-                    details:  AuthDetails::ApiKey {
+                    details: AuthDetails::ApiKey {
                         key: "openai-key".to_string(),
                     },
                 })
@@ -1114,47 +1214,50 @@ mod tests {
         });
         let store = memory_store();
         let run_store = store.create_run(&test_run_id()).await.unwrap();
-        let initialized = initialize(test_persisted(graph, source, &run_dir), InitOptions {
-            run_id:            test_run_id(),
-            run_store:         run_store.into(),
-            dry_run:           false,
-            emitter:           emitter.clone(),
-            sandbox:           SandboxSpec::Local {
-                working_directory: temp.path().to_path_buf(),
+        let initialized = initialize(
+            test_persisted(graph, source, &run_dir),
+            InitOptions {
+                run_id: test_run_id(),
+                run_store: run_store.into(),
+                dry_run: false,
+                emitter: emitter.clone(),
+                sandbox: SandboxSpec::Local {
+                    working_directory: temp.path().to_path_buf(),
+                },
+                llm: LlmSpec {
+                    model: "fake-acp".to_string(),
+                    provider: fabro_llm::Provider::OpenAi,
+                    fallback_chain: Vec::new(),
+                    mcp_servers: Vec::new(),
+                    dry_run: false,
+                },
+                interviewer: Arc::new(AutoApproveInterviewer::engine()),
+                steering_hub: Arc::new(crate::steering_hub::SteeringHub::new(emitter)),
+                lifecycle: crate::run_options::LifecycleOptions {
+                    setup_commands: Vec::new(),
+                    setup_command_timeout_ms: 1_000,
+                    devcontainer_phases: Vec::new(),
+                },
+                run_options: test_settings(&run_dir),
+                workflow_path: None,
+                workflow_bundle: None,
+                hooks: fabro_hooks::HookSettings { hooks: vec![] },
+                sandbox_env: SandboxEnvSpec {
+                    devcontainer_env: HashMap::new(),
+                    toml_env: HashMap::new(),
+                    github_permissions: None,
+                    origin_url: None,
+                },
+                vault: Some(vault),
+                devcontainer: None,
+                git: None,
+                run_control: None,
+                registry_override: None,
+                artifact_sink: None,
+                checkpoint: None,
+                seed_context: None,
             },
-            llm:               LlmSpec {
-                model:          "fake-acp".to_string(),
-                provider:       fabro_llm::Provider::OpenAi,
-                fallback_chain: Vec::new(),
-                mcp_servers:    Vec::new(),
-                dry_run:        false,
-            },
-            interviewer:       Arc::new(AutoApproveInterviewer::engine()),
-            steering_hub:      Arc::new(crate::steering_hub::SteeringHub::new(emitter)),
-            lifecycle:         crate::run_options::LifecycleOptions {
-                setup_commands:           Vec::new(),
-                setup_command_timeout_ms: 1_000,
-                devcontainer_phases:      Vec::new(),
-            },
-            run_options:       test_settings(&run_dir),
-            workflow_path:     None,
-            workflow_bundle:   None,
-            hooks:             fabro_hooks::HookSettings { hooks: vec![] },
-            sandbox_env:       SandboxEnvSpec {
-                devcontainer_env:   HashMap::new(),
-                toml_env:           HashMap::new(),
-                github_permissions: None,
-                origin_url:         None,
-            },
-            vault:             Some(vault),
-            devcontainer:      None,
-            git:               None,
-            run_control:       None,
-            registry_override: None,
-            artifact_sink:     None,
-            checkpoint:        None,
-            seed_context:      None,
-        })
+        )
         .await
         .unwrap();
 
@@ -1210,47 +1313,50 @@ mod tests {
         });
         store_logger.register(&emitter);
 
-        let initialized = initialize(persisted, InitOptions {
-            run_id:            test_run_id(),
-            run_store:         run_store.into(),
-            dry_run:           false,
-            emitter:           emitter.clone(),
-            sandbox:           SandboxSpec::Local {
-                working_directory: std::env::current_dir().unwrap(),
+        let initialized = initialize(
+            persisted,
+            InitOptions {
+                run_id: test_run_id(),
+                run_store: run_store.into(),
+                dry_run: false,
+                emitter: emitter.clone(),
+                sandbox: SandboxSpec::Local {
+                    working_directory: std::env::current_dir().unwrap(),
+                },
+                llm: LlmSpec {
+                    model: "test-model".to_string(),
+                    provider: fabro_llm::Provider::Anthropic,
+                    fallback_chain: Vec::new(),
+                    mcp_servers: Vec::new(),
+                    dry_run: true,
+                },
+                interviewer: Arc::new(AutoApproveInterviewer::engine()),
+                steering_hub: Arc::new(crate::steering_hub::SteeringHub::new(emitter.clone())),
+                lifecycle: crate::run_options::LifecycleOptions {
+                    setup_commands: vec!["true".to_string()],
+                    setup_command_timeout_ms: 1_000,
+                    devcontainer_phases: vec![],
+                },
+                run_options: test_settings(&run_dir),
+                workflow_path: None,
+                workflow_bundle: None,
+                hooks: fabro_hooks::HookSettings { hooks: vec![] },
+                sandbox_env: SandboxEnvSpec {
+                    devcontainer_env: HashMap::new(),
+                    toml_env: HashMap::new(),
+                    github_permissions: None,
+                    origin_url: None,
+                },
+                vault: None,
+                devcontainer: None,
+                git: None,
+                run_control: None,
+                registry_override: None,
+                artifact_sink: None,
+                checkpoint: None,
+                seed_context: None,
             },
-            llm:               LlmSpec {
-                model:          "test-model".to_string(),
-                provider:       fabro_llm::Provider::Anthropic,
-                fallback_chain: Vec::new(),
-                mcp_servers:    Vec::new(),
-                dry_run:        true,
-            },
-            interviewer:       Arc::new(AutoApproveInterviewer::engine()),
-            steering_hub:      Arc::new(crate::steering_hub::SteeringHub::new(emitter.clone())),
-            lifecycle:         crate::run_options::LifecycleOptions {
-                setup_commands:           vec!["true".to_string()],
-                setup_command_timeout_ms: 1_000,
-                devcontainer_phases:      vec![],
-            },
-            run_options:       test_settings(&run_dir),
-            workflow_path:     None,
-            workflow_bundle:   None,
-            hooks:             fabro_hooks::HookSettings { hooks: vec![] },
-            sandbox_env:       SandboxEnvSpec {
-                devcontainer_env:   HashMap::new(),
-                toml_env:           HashMap::new(),
-                github_permissions: None,
-                origin_url:         None,
-            },
-            vault:             None,
-            devcontainer:      None,
-            git:               None,
-            run_control:       None,
-            registry_override: None,
-            artifact_sink:     None,
-            checkpoint:        None,
-            seed_context:      None,
-        })
+        )
         .await
         .unwrap();
         store_logger.flush().await;
@@ -1320,51 +1426,54 @@ mod tests {
         run_options.cancel_token = cancel_token;
 
         let emitter = Arc::new(crate::event::Emitter::new(test_run_id()));
-        let result = initialize(persisted, InitOptions {
-            run_id: test_run_id(),
-            run_store: {
-                let store = memory_store();
-                let inner = store.create_run(&test_run_id()).await.unwrap();
-                inner.into()
+        let result = initialize(
+            persisted,
+            InitOptions {
+                run_id: test_run_id(),
+                run_store: {
+                    let store = memory_store();
+                    let inner = store.create_run(&test_run_id()).await.unwrap();
+                    inner.into()
+                },
+                dry_run: false,
+                emitter: emitter.clone(),
+                sandbox: SandboxSpec::Local {
+                    working_directory: std::env::current_dir().unwrap(),
+                },
+                llm: LlmSpec {
+                    model: "test-model".to_string(),
+                    provider: fabro_llm::Provider::Anthropic,
+                    fallback_chain: Vec::new(),
+                    mcp_servers: Vec::new(),
+                    dry_run: true,
+                },
+                interviewer: Arc::new(AutoApproveInterviewer::engine()),
+                steering_hub: Arc::new(crate::steering_hub::SteeringHub::new(emitter.clone())),
+                lifecycle: crate::run_options::LifecycleOptions {
+                    setup_commands: vec!["sleep 5".to_string()],
+                    setup_command_timeout_ms: 5_000,
+                    devcontainer_phases: vec![],
+                },
+                run_options,
+                workflow_path: None,
+                workflow_bundle: None,
+                hooks: fabro_hooks::HookSettings { hooks: vec![] },
+                sandbox_env: SandboxEnvSpec {
+                    devcontainer_env: HashMap::new(),
+                    toml_env: HashMap::new(),
+                    github_permissions: None,
+                    origin_url: None,
+                },
+                vault: None,
+                devcontainer: None,
+                git: None,
+                run_control: None,
+                registry_override: None,
+                artifact_sink: None,
+                checkpoint: None,
+                seed_context: None,
             },
-            dry_run: false,
-            emitter: emitter.clone(),
-            sandbox: SandboxSpec::Local {
-                working_directory: std::env::current_dir().unwrap(),
-            },
-            llm: LlmSpec {
-                model:          "test-model".to_string(),
-                provider:       fabro_llm::Provider::Anthropic,
-                fallback_chain: Vec::new(),
-                mcp_servers:    Vec::new(),
-                dry_run:        true,
-            },
-            interviewer: Arc::new(AutoApproveInterviewer::engine()),
-            steering_hub: Arc::new(crate::steering_hub::SteeringHub::new(emitter.clone())),
-            lifecycle: crate::run_options::LifecycleOptions {
-                setup_commands:           vec!["sleep 5".to_string()],
-                setup_command_timeout_ms: 5_000,
-                devcontainer_phases:      vec![],
-            },
-            run_options,
-            workflow_path: None,
-            workflow_bundle: None,
-            hooks: fabro_hooks::HookSettings { hooks: vec![] },
-            sandbox_env: SandboxEnvSpec {
-                devcontainer_env:   HashMap::new(),
-                toml_env:           HashMap::new(),
-                github_permissions: None,
-                origin_url:         None,
-            },
-            vault: None,
-            devcontainer: None,
-            git: None,
-            run_control: None,
-            registry_override: None,
-            artifact_sink: None,
-            checkpoint: None,
-            seed_context: None,
-        })
+        )
         .await;
 
         assert!(matches!(result, Err(Error::Cancelled)));
@@ -1383,53 +1492,57 @@ mod tests {
         run_options.cancel_token = cancel_token;
 
         let emitter = Arc::new(crate::event::Emitter::new(test_run_id()));
-        let result = initialize(persisted, InitOptions {
-            run_id: test_run_id(),
-            run_store: {
-                let store = memory_store();
-                let inner = store.create_run(&test_run_id()).await.unwrap();
-                inner.into()
+        let result = initialize(
+            persisted,
+            InitOptions {
+                run_id: test_run_id(),
+                run_store: {
+                    let store = memory_store();
+                    let inner = store.create_run(&test_run_id()).await.unwrap();
+                    inner.into()
+                },
+                dry_run: false,
+                emitter: emitter.clone(),
+                sandbox: SandboxSpec::Local {
+                    working_directory: std::env::current_dir().unwrap(),
+                },
+                llm: LlmSpec {
+                    model: "test-model".to_string(),
+                    provider: fabro_llm::Provider::Anthropic,
+                    fallback_chain: Vec::new(),
+                    mcp_servers: Vec::new(),
+                    dry_run: true,
+                },
+                interviewer: Arc::new(AutoApproveInterviewer::engine()),
+                steering_hub: Arc::new(crate::steering_hub::SteeringHub::new(emitter.clone())),
+                lifecycle: crate::run_options::LifecycleOptions {
+                    setup_commands: vec![],
+                    setup_command_timeout_ms: 5_000,
+                    devcontainer_phases: vec![(
+                        "on_create".to_string(),
+                        vec![fabro_devcontainer::Command::Shell("sleep 5".to_string())],
+                    )],
+                },
+                run_options,
+                workflow_path: None,
+                workflow_bundle: None,
+                hooks: fabro_hooks::HookSettings { hooks: vec![] },
+                sandbox_env: SandboxEnvSpec {
+                    devcontainer_env: HashMap::new(),
+                    toml_env: HashMap::new(),
+                    github_permissions: None,
+                    origin_url: None,
+                },
+                vault: None,
+                devcontainer: None,
+                git: None,
+                run_control: None,
+                registry_override: None,
+                artifact_sink: None,
+                checkpoint: None,
+                seed_context: None,
             },
-            dry_run: false,
-            emitter: emitter.clone(),
-            sandbox: SandboxSpec::Local {
-                working_directory: std::env::current_dir().unwrap(),
-            },
-            llm: LlmSpec {
-                model:          "test-model".to_string(),
-                provider:       fabro_llm::Provider::Anthropic,
-                fallback_chain: Vec::new(),
-                mcp_servers:    Vec::new(),
-                dry_run:        true,
-            },
-            interviewer: Arc::new(AutoApproveInterviewer::engine()),
-            steering_hub: Arc::new(crate::steering_hub::SteeringHub::new(emitter.clone())),
-            lifecycle: crate::run_options::LifecycleOptions {
-                setup_commands:           vec![],
-                setup_command_timeout_ms: 5_000,
-                devcontainer_phases:      vec![("on_create".to_string(), vec![
-                    fabro_devcontainer::Command::Shell("sleep 5".to_string()),
-                ])],
-            },
-            run_options,
-            workflow_path: None,
-            workflow_bundle: None,
-            hooks: fabro_hooks::HookSettings { hooks: vec![] },
-            sandbox_env: SandboxEnvSpec {
-                devcontainer_env:   HashMap::new(),
-                toml_env:           HashMap::new(),
-                github_permissions: None,
-                origin_url:         None,
-            },
-            vault: None,
-            devcontainer: None,
-            git: None,
-            run_control: None,
-            registry_override: None,
-            artifact_sink: None,
-            checkpoint: None,
-            seed_context: None,
-        })
+        )
         .await;
 
         assert!(matches!(result, Err(Error::Cancelled)));

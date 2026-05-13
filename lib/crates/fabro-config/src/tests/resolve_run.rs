@@ -146,6 +146,36 @@ provider = "local"
 }
 
 #[test]
+fn resolves_daytona_volume_mounts() {
+    let settings = WorkflowSettingsBuilder::from_toml(
+        r#"
+_version = 1
+
+[run.sandbox]
+provider = "daytona"
+
+[[run.sandbox.daytona.volumes]]
+volume_id = "vol-maestro-agent-auth"
+mount_path = "/home/daytona/agent-state"
+subpath = "agent-auth"
+"#,
+    )
+    .expect("daytona volume mounts should resolve")
+    .run;
+
+    let daytona = settings
+        .sandbox
+        .daytona
+        .as_ref()
+        .expect("daytona settings should resolve");
+    assert_eq!(daytona.volumes.len(), 1);
+    let volume = &daytona.volumes[0];
+    assert_eq!(volume.volume_id, "vol-maestro-agent-auth");
+    assert_eq!(volume.mount_path, "/home/daytona/agent-state");
+    assert_eq!(volume.subpath.as_deref(), Some("agent-auth"));
+}
+
+#[test]
 fn preserves_goal_variants_and_model_sources() {
     let settings = WorkflowSettingsBuilder::from_toml(
         r#"

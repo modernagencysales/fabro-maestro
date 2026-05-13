@@ -16,43 +16,43 @@ use super::splice_array::SPLICE_MARKER;
 #[serde(deny_unknown_fields)]
 pub struct RunLayer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub goal:          Option<RunGoalLayer>,
+    pub goal: Option<RunGoalLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub working_dir:   Option<InterpString>,
+    pub working_dir: Option<InterpString>,
     /// Flat string-to-string map. Replaces wholesale across layers.
     #[serde(default, skip_serializing_if = "ReplaceMap::is_empty")]
-    pub metadata:      ReplaceMap<String>,
+    pub metadata: ReplaceMap<String>,
     /// Run inputs: typed scalar values. Replaces wholesale across layers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub inputs:        Option<HashMap<String, toml::Value>>,
+    pub inputs: Option<HashMap<String, toml::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model:         Option<RunModelLayer>,
+    pub model: Option<RunModelLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub git:           Option<RunGitLayer>,
+    pub git: Option<RunGitLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prepare:       Option<RunPrepareLayer>,
+    pub prepare: Option<RunPrepareLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub execution:     Option<RunExecutionLayer>,
+    pub execution: Option<RunExecutionLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub checkpoint:    Option<RunCheckpointLayer>,
+    pub checkpoint: Option<RunCheckpointLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sandbox:       Option<RunSandboxLayer>,
+    pub sandbox: Option<RunSandboxLayer>,
     #[serde(default, skip_serializing_if = "MergeMap::is_empty")]
     pub notifications: MergeMap<NotificationRouteLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub interviews:    Option<InterviewsLayer>,
+    pub interviews: Option<InterviewsLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent:         Option<RunAgentLayer>,
+    pub agent: Option<RunAgentLayer>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub hooks:         Vec<HookEntry>,
+    pub hooks: Vec<HookEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scm:           Option<RunScmLayer>,
+    pub scm: Option<RunScmLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pull_request:  Option<RunPullRequestLayer>,
+    pub pull_request: Option<RunPullRequestLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artifacts:     Option<RunArtifactsLayer>,
+    pub artifacts: Option<RunArtifactsLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub integrations:  Option<RunIntegrationsLayer>,
+    pub integrations: Option<RunIntegrationsLayer>,
 }
 
 /// `[run.integrations]` — run-level integration knobs.
@@ -135,11 +135,11 @@ pub struct RunModelLayer {
     /// Provider name for workflow model selection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[option(value_type = "string")]
-    pub provider:  Option<InterpString>,
+    pub provider: Option<InterpString>,
     /// Model name for workflow runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[option(value_type = "string")]
-    pub name:      Option<InterpString>,
+    pub name: Option<InterpString>,
     /// Ordered list of fallback model references. Supports `...` splice marker
     /// at layering time — see [`super::splice_array`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -198,7 +198,7 @@ pub struct GitAuthorLayer {
     /// Git author name for checkpoint commits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[option(default = "\"fabro\"", value_type = "string")]
-    pub name:  Option<InterpString>,
+    pub name: Option<InterpString>,
     /// Git author email for checkpoint commits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[option(default = "\"fabro@local\"", value_type = "string")]
@@ -211,7 +211,7 @@ pub struct GitAuthorLayer {
 #[serde(deny_unknown_fields)]
 pub struct RunPrepareLayer {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub steps:   Vec<PrepareStep>,
+    pub steps: Vec<PrepareStep>,
     /// Optional timeout applied to each prepare step.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<Duration>,
@@ -222,11 +222,11 @@ pub struct RunPrepareLayer {
 #[serde(deny_unknown_fields)]
 pub struct PrepareStep {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub script:  Option<InterpString>,
+    pub script: Option<InterpString>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<Vec<InterpString>>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub env:     HashMap<String, InterpString>,
+    pub env: HashMap<String, InterpString>,
 }
 
 /// `[run.execution]` — run posture knobs.
@@ -234,7 +234,7 @@ pub struct PrepareStep {
 #[serde(deny_unknown_fields)]
 pub struct RunExecutionLayer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mode:     Option<RunMode>,
+    pub mode: Option<RunMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<ApprovalMode>,
 }
@@ -252,37 +252,37 @@ pub struct RunCheckpointLayer {
 #[serde(deny_unknown_fields)]
 pub struct RunSandboxLayer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider:         Option<String>,
+    pub provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub preserve:         Option<bool>,
+    pub preserve: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_on_terminal: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub devcontainer:     Option<bool>,
+    pub devcontainer: Option<bool>,
     /// Sticky merge-by-key across layers.
     #[serde(default, skip_serializing_if = "StickyMap::is_empty")]
-    pub env:              StickyMap<InterpString>,
+    pub env: StickyMap<InterpString>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub docker:           Option<DockerSandboxLayer>,
+    pub docker: Option<DockerSandboxLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub daytona:          Option<DaytonaSandboxLayer>,
+    pub daytona: Option<DaytonaSandboxLayer>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, fabro_macros::Combine)]
 #[serde(deny_unknown_fields)]
 pub struct DockerSandboxLayer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image:        Option<String>,
+    pub image: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_limit: Option<Size>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cpu_quota:    Option<i64>,
+    pub cpu_quota: Option<i64>,
     #[serde(default, skip_serializing_if = "StickyMap::is_empty")]
-    pub env_vars:     StickyMap<InterpString>,
+    pub env_vars: StickyMap<InterpString>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skip_clone:   Option<bool>,
+    pub skip_clone: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, fabro_macros::Combine)]
@@ -292,26 +292,37 @@ pub struct DaytonaSandboxLayer {
     pub auto_stop_interval: Option<i32>,
     /// Sticky merge-by-key (provider-native labels).
     #[serde(default, skip_serializing_if = "StickyMap::is_empty")]
-    pub labels:             StickyMap<String>,
+    pub labels: StickyMap<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub volumes: Vec<DaytonaVolumeLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub snapshot:           Option<DaytonaSnapshotLayer>,
+    pub snapshot: Option<DaytonaSnapshotLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub network:            Option<DaytonaNetworkLayer>,
+    pub network: Option<DaytonaNetworkLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skip_clone:         Option<bool>,
+    pub skip_clone: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DaytonaVolumeLayer {
+    pub volume_id: String,
+    pub mount_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subpath: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DaytonaSnapshotLayer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name:       Option<String>,
+    pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cpu:        Option<i32>,
+    pub cpu: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory:     Option<Size>,
+    pub memory: Option<Size>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub disk:       Option<Size>,
+    pub disk: Option<Size>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dockerfile: Option<DaytonaDockerfileLayer>,
 }
@@ -328,15 +339,15 @@ pub enum DaytonaDockerfileLayer {
 #[serde(deny_unknown_fields)]
 pub struct NotificationRouteLayer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enabled:  Option<bool>,
+    pub enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
     /// Raw Fabro event names. Splice marker supported at layering time.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub events:   Vec<StringOrSplice>,
+    pub events: Vec<StringOrSplice>,
     /// Provider-specific destination subtables.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub slack:    Option<NotificationProviderLayer>,
+    pub slack: Option<NotificationProviderLayer>,
 }
 
 /// A single string array entry that may be the splice marker.
@@ -381,7 +392,7 @@ pub struct InterviewsLayer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub slack:    Option<InterviewProviderLayer>,
+    pub slack: Option<InterviewProviderLayer>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -414,7 +425,7 @@ pub struct RunAgentLayer {
     /// Agent-scoped MCP server entries, keyed by name.
     #[serde(default, skip_serializing_if = "StickyMap::is_empty")]
     #[option(value_type = "table")]
-    pub mcps:        StickyMap<McpEntryLayer>,
+    pub mcps: StickyMap<McpEntryLayer>,
 }
 
 /// A single MCP entry. `type` selects the transport; `script`/`command` are
@@ -425,43 +436,43 @@ pub struct RunAgentLayer {
 pub enum McpEntryLayer {
     Http {
         #[serde(default)]
-        enabled:         Option<bool>,
-        url:             InterpString,
+        enabled: Option<bool>,
+        url: InterpString,
         #[serde(default)]
-        headers:         HashMap<String, InterpString>,
+        headers: HashMap<String, InterpString>,
         #[serde(default)]
         startup_timeout: Option<Duration>,
         #[serde(default)]
-        tool_timeout:    Option<Duration>,
+        tool_timeout: Option<Duration>,
     },
     Stdio {
         #[serde(default)]
-        enabled:         Option<bool>,
+        enabled: Option<bool>,
         #[serde(default)]
-        script:          Option<InterpString>,
+        script: Option<InterpString>,
         #[serde(default)]
-        command:         Option<Vec<InterpString>>,
+        command: Option<Vec<InterpString>>,
         #[serde(default)]
-        env:             HashMap<String, InterpString>,
+        env: HashMap<String, InterpString>,
         #[serde(default)]
         startup_timeout: Option<Duration>,
         #[serde(default)]
-        tool_timeout:    Option<Duration>,
+        tool_timeout: Option<Duration>,
     },
     Sandbox {
         #[serde(default)]
-        enabled:         Option<bool>,
+        enabled: Option<bool>,
         #[serde(default)]
-        script:          Option<InterpString>,
+        script: Option<InterpString>,
         #[serde(default)]
-        command:         Option<Vec<InterpString>>,
-        port:            u16,
+        command: Option<Vec<InterpString>>,
+        port: u16,
         #[serde(default)]
-        env:             HashMap<String, InterpString>,
+        env: HashMap<String, InterpString>,
         #[serde(default)]
         startup_timeout: Option<Duration>,
         #[serde(default)]
-        tool_timeout:    Option<Duration>,
+        tool_timeout: Option<Duration>,
     },
 }
 
@@ -473,40 +484,40 @@ pub enum McpEntryLayer {
 pub struct HookEntry {
     /// Optional merge identity. Hooks with the same `id` replace in place.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub id:               Option<String>,
+    pub id: Option<String>,
     /// Display-only human name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name:             Option<String>,
-    pub event:            HookEvent,
+    pub name: Option<String>,
+    pub event: HookEvent,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub matcher:          Option<String>,
+    pub matcher: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub blocking:         Option<bool>,
+    pub blocking: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout:          Option<Duration>,
+    pub timeout: Option<Duration>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sandbox:          Option<bool>,
+    pub sandbox: Option<bool>,
     // Exactly one of the following groups is expected:
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub script:           Option<InterpString>,
+    pub script: Option<InterpString>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub command:          Option<Vec<InterpString>>,
+    pub command: Option<Vec<InterpString>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url:              Option<InterpString>,
+    pub url: Option<InterpString>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub headers:          HashMap<String, InterpString>,
+    pub headers: HashMap<String, InterpString>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_env_vars: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tls:              Option<HookTlsMode>,
+    pub tls: Option<HookTlsMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prompt:           Option<InterpString>,
+    pub prompt: Option<InterpString>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model:            Option<InterpString>,
+    pub model: Option<InterpString>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tool_rounds:  Option<u32>,
+    pub max_tool_rounds: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent:            Option<HookAgentMarker>,
+    pub agent: Option<HookAgentMarker>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -533,14 +544,14 @@ pub enum HookAgentMarker {
 #[serde(deny_unknown_fields)]
 pub struct RunScmLayer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider:   Option<String>,
+    pub provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub owner:      Option<InterpString>,
+    pub owner: Option<InterpString>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<InterpString>,
     /// Provider-specific SCM leaves. First-pass providers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub github:     Option<ScmGitHubLayer>,
+    pub github: Option<ScmGitHubLayer>,
 }
 
 /// `[run.scm.github]` — GitHub-specific SCM leaf. Intentionally minimal in
@@ -566,16 +577,16 @@ pub struct RunPullRequestLayer {
     /// Automatically create a PR after successful runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[option(default = "false", value_type = "boolean")]
-    pub enabled:        Option<bool>,
+    pub enabled: Option<bool>,
     /// Open created pull requests as drafts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[option(default = "true", value_type = "boolean")]
-    pub draft:          Option<bool>,
+    pub draft: Option<bool>,
     /// Enable GitHub auto-merge for created pull requests. Implies `draft =
     /// false`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[option(default = "false", value_type = "boolean")]
-    pub auto_merge:     Option<bool>,
+    pub auto_merge: Option<bool>,
     /// Merge method to configure for the pull request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[option(

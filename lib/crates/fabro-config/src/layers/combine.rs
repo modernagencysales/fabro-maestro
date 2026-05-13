@@ -14,9 +14,9 @@ use super::LogFilter;
 use super::cli::{CliAuthLayer, CliLoggingLayer, CliTargetLayer};
 use super::features::FeaturesLayer;
 use super::run::{
-    DaytonaSnapshotLayer, HookAgentMarker, HookEntry, HookTlsMode, InterviewProviderLayer,
-    ModelRefOrSplice, NotificationProviderLayer, RunArtifactsLayer, RunCheckpointLayer,
-    RunGoalLayer, RunPrepareLayer, ScmGitHubLayer, StringOrSplice,
+    DaytonaSnapshotLayer, DaytonaVolumeLayer, HookAgentMarker, HookEntry, HookTlsMode,
+    InterviewProviderLayer, ModelRefOrSplice, NotificationProviderLayer, RunArtifactsLayer,
+    RunCheckpointLayer, RunGoalLayer, RunPrepareLayer, ScmGitHubLayer, StringOrSplice,
 };
 use super::server::{
     ObjectStoreLocalLayer, ObjectStoreS3Layer, ServerApiLayer, ServerAuthGithubLayer,
@@ -173,6 +173,12 @@ impl Combine for Vec<HookEntry> {
     }
 }
 
+impl Combine for Vec<DaytonaVolumeLayer> {
+    fn combine(self, other: Self) -> Self {
+        if self.is_empty() { other } else { self }
+    }
+}
+
 fn splice_combine<T: SpliceMarker + Clone>(fallback: Vec<T>, current: Vec<T>) -> Vec<T> {
     if current.is_empty() {
         return fallback;
@@ -293,9 +299,10 @@ mod tests {
             LogFilter::parse("info").unwrap(),
         );
         assert_option_leaf(vec!["this".to_string()], vec!["fallback".to_string()]);
-        assert_option_leaf(vec![ServerAuthMethod::Github], vec![
-            ServerAuthMethod::DevToken,
-        ]);
+        assert_option_leaf(
+            vec![ServerAuthMethod::Github],
+            vec![ServerAuthMethod::DevToken],
+        );
         assert_option_leaf(
             HashMap::from([("this".to_string(), toml::Value::String("value".to_string()))]),
             HashMap::from([(

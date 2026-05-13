@@ -18,7 +18,8 @@ use fabro_llm::Provider;
 use fabro_llm::model_test::{ModelTestStatus, run_basic_model_probe};
 use fabro_model::Catalog;
 use fabro_sandbox::config::{
-    DaytonaNetwork, DaytonaSnapshotSettings, DockerfileSource as SandboxDockerfileSource,
+    DaytonaNetwork, DaytonaSnapshotSettings, DaytonaVolumeMount,
+    DockerfileSource as SandboxDockerfileSource,
 };
 use fabro_sandbox::daytona::DaytonaConfig;
 use fabro_sandbox::redact::redact_auth_url;
@@ -46,22 +47,22 @@ use crate::server::AppState;
 
 #[derive(Clone)]
 pub(crate) struct PreparedManifest {
-    pub cwd:              PathBuf,
-    pub git:              Option<types::GitContext>,
-    pub root_source:      String,
-    pub run_id:           Option<RunId>,
-    pub title:            Option<String>,
-    pub settings:         WorkflowSettings,
-    pub target_path:      ManifestPath,
-    pub workflow_bundle:  WorkflowBundle,
-    pub workflow_input:   BundledWorkflow,
+    pub cwd: PathBuf,
+    pub git: Option<types::GitContext>,
+    pub root_source: String,
+    pub run_id: Option<RunId>,
+    pub title: Option<String>,
+    pub settings: WorkflowSettings,
+    pub target_path: ManifestPath,
+    pub workflow_bundle: WorkflowBundle,
+    pub workflow_input: BundledWorkflow,
     pub source_directory: PathBuf,
 }
 
 #[derive(Clone, Debug, Default)]
 struct ManifestSettingsOverrides {
-    run:             Option<RunLayer>,
-    cli:             Option<CliLayer>,
+    run: Option<RunLayer>,
+    cli: Option<CliLayer>,
     input_overrides: HashMap<String, toml::Value>,
 }
 
@@ -157,9 +158,9 @@ pub(crate) fn validate_prepared_manifest(
     prepared: &PreparedManifest,
 ) -> Result<Validated, WorkflowError> {
     validate(ValidateInput {
-        workflow:          WorkflowInput::Bundled(prepared.workflow_input.clone()),
-        settings:          prepared.settings.clone(),
-        cwd:               prepared.cwd.clone(),
+        workflow: WorkflowInput::Bundled(prepared.workflow_input.clone()),
+        settings: prepared.settings.clone(),
+        cwd: prepared.cwd.clone(),
         custom_transforms: Vec::new(),
     })
 }
@@ -210,7 +211,7 @@ pub(crate) fn validate_response(
     validated: &Validated,
 ) -> types::ValidateResponse {
     types::ValidateResponse {
-        ok:       !validated.has_errors(),
+        ok: !validated.has_errors(),
         workflow: workflow_summary(validated, prepared.target_path.as_path()),
     }
 }
@@ -254,12 +255,15 @@ pub fn workflow_bundle_from_manifest(
             })
             .transpose()?;
 
-        bundled.insert(path.clone(), BundledWorkflow {
-            path,
-            source: workflow.source.clone(),
-            config,
-            files,
-        });
+        bundled.insert(
+            path.clone(),
+            BundledWorkflow {
+                path,
+                source: workflow.source.clone(),
+                config,
+                files,
+            },
+        );
     }
 
     Ok(WorkflowBundle::new(bundled))
@@ -316,15 +320,15 @@ fn manifest_args_overrides(
     };
 
     let run = fabro_manifest::build_sparse_run_overrides(fabro_manifest::RunOverrideInput {
-        goal:             None,
-        model:            args.model.as_deref(),
-        provider:         args.provider.as_deref(),
-        sandbox:          args.sandbox.as_deref(),
-        docker_image:     args.docker_image.as_deref(),
+        goal: None,
+        model: args.model.as_deref(),
+        provider: args.provider.as_deref(),
+        sandbox: args.sandbox.as_deref(),
+        docker_image: args.docker_image.as_deref(),
         preserve_sandbox: args.preserve_sandbox,
-        dry_run:          args.dry_run,
-        auto_approve:     args.auto_approve,
-        labels:           parse_labels(&args.label),
+        dry_run: args.dry_run,
+        auto_approve: args.auto_approve,
+        labels: parse_labels(&args.label),
     });
 
     // Verbose is a CLI output concern in v2; route it through cli.output.verbosity.
@@ -422,7 +426,7 @@ async fn build_preflight_report(
     if validated.has_errors() {
         return Ok((
             CheckReport {
-                title:    "Run Preflight".into(),
+                title: "Run Preflight".into(),
                 sections: vec![CheckSection {
                     title: String::new(),
                     checks,
@@ -491,7 +495,7 @@ async fn build_preflight_report(
 
     Ok((
         CheckReport {
-            title:    "Run Preflight".into(),
+            title: "Run Preflight".into(),
             sections: vec![CheckSection {
                 title: String::new(),
                 checks,
@@ -516,10 +520,10 @@ fn base_preflight_checks(prepared: &PreparedManifest, graph: &Graph) -> Vec<Chec
 
     vec![
         CheckResult {
-            name:        "Repository".into(),
-            status:      CheckStatus::Pass,
-            summary:     repo_summary,
-            details:     vec![
+            name: "Repository".into(),
+            status: CheckStatus::Pass,
+            summary: repo_summary,
+            details: vec![
                 CheckDetail::new(format!("Setup commands: {setup_command_count}")),
                 CheckDetail {
                     text: format!(
@@ -542,10 +546,10 @@ fn base_preflight_checks(prepared: &PreparedManifest, graph: &Graph) -> Vec<Chec
             remediation: None,
         },
         CheckResult {
-            name:        "Workflow".into(),
-            status:      CheckStatus::Pass,
-            summary:     graph.name.clone(),
-            details:     vec![
+            name: "Workflow".into(),
+            status: CheckStatus::Pass,
+            summary: graph.name.clone(),
+            details: vec![
                 CheckDetail::new(format!("Nodes: {}", graph.nodes.len())),
                 CheckDetail::new(format!("Edges: {}", graph.edges.len())),
                 CheckDetail::new(format!("Goal: {}", graph.goal())),
@@ -579,7 +583,7 @@ fn resolve_docker_config(settings: &RunNamespace) -> Option<DockerSandboxOptions
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct GitRemoteRefCheck {
     origin_url: String,
-    branch:     Option<String>,
+    branch: Option<String>,
 }
 
 fn clone_disabled_for_provider(provider: SandboxProvider, resolved_run: &RunNamespace) -> bool {
@@ -649,10 +653,10 @@ where
     let origin_url = fabro_github::normalize_repo_origin_url(&git.origin_url);
     if let Err(err) = fabro_github::parse_github_owner_repo(&origin_url) {
         checks.push(CheckResult {
-            name:        "Repository Access".into(),
-            status:      CheckStatus::Error,
-            summary:     "failed".into(),
-            details:     vec![CheckDetail::new(format!("Origin: {origin_url}"))],
+            name: "Repository Access".into(),
+            status: CheckStatus::Error,
+            summary: "failed".into(),
+            details: vec![CheckDetail::new(format!("Origin: {origin_url}"))],
             remediation: Some(format!(
                 "Clone-based sandboxes currently support GitHub repository origins only: {err}"
             )),
@@ -842,10 +846,10 @@ async fn run_sandbox_check(
             Err(err) => {
                 let cleanup_error = sandbox.cleanup().await.err();
                 checks.push(CheckResult {
-                    name:        "Sandbox".into(),
-                    status:      CheckStatus::Error,
-                    summary:     "failed".into(),
-                    details:     vec![CheckDetail::new(format!("Provider: {sandbox_provider}"))],
+                    name: "Sandbox".into(),
+                    status: CheckStatus::Error,
+                    summary: "failed".into(),
+                    details: vec![CheckDetail::new(format!("Provider: {sandbox_provider}"))],
                     remediation: Some(cleanup_error.map_or_else(
                         || format!("Sandbox init failed: {err}"),
                         |cleanup| {
@@ -858,10 +862,10 @@ async fn run_sandbox_check(
         },
         Err(err) => {
             checks.push(CheckResult {
-                name:        "Sandbox".into(),
-                status:      CheckStatus::Error,
-                summary:     "failed".into(),
-                details:     vec![CheckDetail::new(format!("Provider: {sandbox_provider}"))],
+                name: "Sandbox".into(),
+                status: CheckStatus::Error,
+                summary: "failed".into(),
+                details: vec![CheckDetail::new(format!("Provider: {sandbox_provider}"))],
                 remediation: Some(err),
             });
             false
@@ -872,10 +876,10 @@ async fn run_sandbox_check(
 const MODEL_PREFLIGHT_PROBE_CONCURRENCY: usize = 4;
 
 struct PendingModelProbe {
-    index:         usize,
-    model_id:      String,
+    index: usize,
+    model_id: String,
     provider_name: String,
-    provider:      Provider,
+    provider: Provider,
 }
 
 async fn run_llm_check(
@@ -947,28 +951,34 @@ async fn run_llm_check(
                             .find(|(candidate, _)| *candidate == provider)
                         {
                             all_ok = false;
-                            completed_checks.push((index, CheckResult {
-                                name:        "LLM".into(),
-                                status:      CheckStatus::Warning,
-                                summary:     model_id.clone(),
-                                details:     vec![CheckDetail::new(format!(
-                                    "Provider: {provider_name}"
-                                ))],
-                                remediation: Some(auth_issue_message(provider, issue)),
-                            }));
+                            completed_checks.push((
+                                index,
+                                CheckResult {
+                                    name: "LLM".into(),
+                                    status: CheckStatus::Warning,
+                                    summary: model_id.clone(),
+                                    details: vec![CheckDetail::new(format!(
+                                        "Provider: {provider_name}"
+                                    ))],
+                                    remediation: Some(auth_issue_message(provider, issue)),
+                                },
+                            ));
                         } else if !configured.iter().any(|name| name == provider_name) {
                             all_ok = false;
-                            completed_checks.push((index, CheckResult {
-                                name:        "LLM".into(),
-                                status:      CheckStatus::Warning,
-                                summary:     model_id.clone(),
-                                details:     vec![CheckDetail::new(format!(
-                                    "Provider: {provider_name}"
-                                ))],
-                                remediation: Some(format!(
-                                    "Provider \"{provider_name}\" is not configured"
-                                )),
-                            }));
+                            completed_checks.push((
+                                index,
+                                CheckResult {
+                                    name: "LLM".into(),
+                                    status: CheckStatus::Warning,
+                                    summary: model_id.clone(),
+                                    details: vec![CheckDetail::new(format!(
+                                        "Provider: {provider_name}"
+                                    ))],
+                                    remediation: Some(format!(
+                                        "Provider \"{provider_name}\" is not configured"
+                                    )),
+                                },
+                            ));
                         } else {
                             pending_probes.push(PendingModelProbe {
                                 index,
@@ -980,17 +990,20 @@ async fn run_llm_check(
                     }
                     Err(err) => {
                         all_ok = false;
-                        completed_checks.push((index, CheckResult {
-                            name:        "LLM".into(),
-                            status:      CheckStatus::Error,
-                            summary:     model_id.clone(),
-                            details:     vec![CheckDetail::new(format!(
-                                "Provider: {provider_name}"
-                            ))],
-                            remediation: Some(format!(
-                                "Invalid provider \"{provider_name}\": {err}"
-                            )),
-                        }));
+                        completed_checks.push((
+                            index,
+                            CheckResult {
+                                name: "LLM".into(),
+                                status: CheckStatus::Error,
+                                summary: model_id.clone(),
+                                details: vec![CheckDetail::new(format!(
+                                    "Provider: {provider_name}"
+                                ))],
+                                remediation: Some(format!(
+                                    "Invalid provider \"{provider_name}\": {err}"
+                                )),
+                            },
+                        ));
                     }
                 }
             }
@@ -1014,16 +1027,19 @@ async fn run_llm_check(
                                 )),
                             )
                         };
-                        (probe.index, CheckResult {
-                            name: "LLM".into(),
-                            status,
-                            summary: probe.model_id,
-                            details: vec![
-                                CheckDetail::new(format!("Provider: {}", probe.provider_name)),
-                                CheckDetail::new("Probe: basic generation".to_string()),
-                            ],
-                            remediation,
-                        })
+                        (
+                            probe.index,
+                            CheckResult {
+                                name: "LLM".into(),
+                                status,
+                                summary: probe.model_id,
+                                details: vec![
+                                    CheckDetail::new(format!("Provider: {}", probe.provider_name)),
+                                    CheckDetail::new("Probe: basic generation".to_string()),
+                                ],
+                                remediation,
+                            },
+                        )
                     }
                 })
                 .buffer_unordered(MODEL_PREFLIGHT_PROBE_CONCURRENCY)
@@ -1043,10 +1059,10 @@ async fn run_llm_check(
         }
         Err(err) => {
             checks.push(CheckResult {
-                name:        "LLM".into(),
-                status:      CheckStatus::Error,
-                summary:     "initialization failed".into(),
-                details:     vec![],
+                name: "LLM".into(),
+                status: CheckStatus::Error,
+                summary: "initialization failed".into(),
+                details: vec![],
                 remediation: Some(format!("LLM client init failed: {err}")),
             });
             false
@@ -1086,15 +1102,24 @@ fn resolve_model_provider(
 fn runtime_daytona_config(settings: &DaytonaSettings) -> DaytonaConfig {
     DaytonaConfig {
         auto_stop_interval: settings.auto_stop_interval,
-        labels:             (!settings.labels.is_empty()).then_some(settings.labels.clone()),
-        snapshot:           settings
+        labels: (!settings.labels.is_empty()).then_some(settings.labels.clone()),
+        volumes: settings
+            .volumes
+            .iter()
+            .map(|volume| DaytonaVolumeMount {
+                volume_id: volume.volume_id.clone(),
+                mount_path: volume.mount_path.clone(),
+                subpath: volume.subpath.clone(),
+            })
+            .collect(),
+        snapshot: settings
             .snapshot
             .as_ref()
             .map(|snapshot| DaytonaSnapshotSettings {
-                name:       snapshot.name.clone(),
-                cpu:        snapshot.cpu,
-                memory:     snapshot.memory_gb,
-                disk:       snapshot.disk_gb,
+                name: snapshot.name.clone(),
+                cpu: snapshot.cpu,
+                memory: snapshot.memory_gb,
+                disk: snapshot.disk_gb,
                 dockerfile: snapshot
                     .dockerfile
                     .as_ref()
@@ -1107,14 +1132,14 @@ fn runtime_daytona_config(settings: &DaytonaSettings) -> DaytonaConfig {
                         }
                     }),
             }),
-        network:            settings.network.as_ref().map(|network| match network {
+        network: settings.network.as_ref().map(|network| match network {
             DaytonaNetworkLayer::Block => DaytonaNetwork::Block,
             DaytonaNetworkLayer::AllowAll => DaytonaNetwork::AllowAll,
             DaytonaNetworkLayer::AllowList { allow_list } => {
                 DaytonaNetwork::AllowList(allow_list.clone())
             }
         }),
-        skip_clone:         settings.skip_clone,
+        skip_clone: settings.skip_clone,
     }
 }
 
@@ -1162,26 +1187,26 @@ async fn run_github_token_check(
         (Some(creds), Some(git)) => {
             match mint_github_token(creds, &git.origin_url, &github_permissions).await {
                 Ok(_) => checks.push(CheckResult {
-                    name:        "GitHub Token".into(),
-                    status:      CheckStatus::Pass,
-                    summary:     "minted".into(),
-                    details:     perm_details,
+                    name: "GitHub Token".into(),
+                    status: CheckStatus::Pass,
+                    summary: "minted".into(),
+                    details: perm_details,
                     remediation: None,
                 }),
                 Err(err) => checks.push(CheckResult {
-                    name:        "GitHub Token".into(),
-                    status:      CheckStatus::Error,
-                    summary:     "failed".into(),
-                    details:     perm_details,
+                    name: "GitHub Token".into(),
+                    status: CheckStatus::Error,
+                    summary: "failed".into(),
+                    details: perm_details,
                     remediation: Some(format!("Failed to mint GitHub token: {err}")),
                 }),
             }
         }
         _ => checks.push(CheckResult {
-            name:        "GitHub Token".into(),
-            status:      CheckStatus::Warning,
-            summary:     "skipped".into(),
-            details:     perm_details,
+            name: "GitHub Token".into(),
+            status: CheckStatus::Warning,
+            summary: "skipped".into(),
+            details: perm_details,
             remediation: Some("No GitHub credentials or origin URL available".to_string()),
         }),
     }
@@ -1223,12 +1248,12 @@ fn preflight_response(
 fn workflow_summary(validated: &Validated, target_path: &Path) -> types::PreflightWorkflowSummary {
     types::PreflightWorkflowSummary {
         diagnostics: diagnostics_to_api(validated.diagnostics()),
-        edges:       i64::try_from(validated.graph().edges.len())
+        edges: i64::try_from(validated.graph().edges.len())
             .expect("graph edge count should fit in i64"),
-        goal:        validated.graph().goal().to_string(),
-        graph_path:  Some(target_path.display().to_string()),
-        name:        validated.graph().name.clone(),
-        nodes:       i64::try_from(validated.graph().nodes.len())
+        goal: validated.graph().goal().to_string(),
+        graph_path: Some(target_path.display().to_string()),
+        name: validated.graph().name.clone(),
+        nodes: i64::try_from(validated.graph().nodes.len())
             .expect("graph node count should fit in i64"),
     }
 }
@@ -1239,14 +1264,14 @@ fn diagnostics_to_api(
     diagnostics
         .iter()
         .map(|diagnostic| types::WorkflowDiagnostic {
-            edge:     diagnostic
+            edge: diagnostic
                 .edge
                 .as_ref()
                 .map(|edge: &(String, String)| [edge.0.clone(), edge.1.clone()]),
-            fix:      diagnostic.fix.clone(),
-            message:  diagnostic.message.clone(),
-            node_id:  diagnostic.node_id.clone(),
-            rule:     diagnostic.rule.clone(),
+            fix: diagnostic.fix.clone(),
+            message: diagnostic.message.clone(),
+            node_id: diagnostic.node_id.clone(),
+            rule: diagnostic.rule.clone(),
             severity: match diagnostic.severity {
                 Severity::Error => types::WorkflowDiagnosticSeverity::Error,
                 Severity::Warning => types::WorkflowDiagnosticSeverity::Warning,
@@ -1266,7 +1291,7 @@ fn report_to_api(report: &CheckReport) -> types::PreflightCheckReport {
                     .checks
                     .iter()
                     .map(|check| types::PreflightCheckResult {
-                        details:     check
+                        details: check
                             .details
                             .iter()
                             .map(|detail| types::PreflightCheckDetail {
@@ -1274,20 +1299,20 @@ fn report_to_api(report: &CheckReport) -> types::PreflightCheckReport {
                                 warn: detail.warn,
                             })
                             .collect(),
-                        name:        check.name.clone(),
+                        name: check.name.clone(),
                         remediation: check.remediation.clone(),
-                        status:      match check.status {
+                        status: match check.status {
                             CheckStatus::Pass => types::PreflightCheckResultStatus::Pass,
                             CheckStatus::Warning => types::PreflightCheckResultStatus::Warning,
                             CheckStatus::Error => types::PreflightCheckResultStatus::Error,
                         },
-                        summary:     check.summary.clone(),
+                        summary: check.summary.clone(),
                     })
                     .collect(),
-                title:  section.title.clone(),
+                title: section.title.clone(),
             })
             .collect(),
-        title:    report.title.clone(),
+        title: report.title.clone(),
     }
 }
 
@@ -1297,36 +1322,42 @@ mod tests {
 
     fn minimal_manifest() -> types::RunManifest {
         types::RunManifest {
-            args:      None,
-            configs:   Vec::new(),
-            cwd:       "/tmp/project".to_string(),
-            git:       None,
-            goal:      None,
-            run_id:    None,
-            title:     None,
-            target:    types::ManifestTarget {
+            args: None,
+            configs: Vec::new(),
+            cwd: "/tmp/project".to_string(),
+            git: None,
+            goal: None,
+            run_id: None,
+            title: None,
+            target: types::ManifestTarget {
                 identifier: "workflow.fabro".to_string(),
-                path:       "workflow.fabro".to_string(),
+                path: "workflow.fabro".to_string(),
             },
-            version:   1,
-            workflows: HashMap::from([("workflow.fabro".to_string(), types::ManifestWorkflow {
-                config: None,
-                files:  HashMap::new(),
-                source:
-                    "digraph Demo { start [shape=Mdiamond] exit [shape=Msquare] start -> exit }"
-                        .to_string(),
-            })]),
+            version: 1,
+            workflows: HashMap::from([(
+                "workflow.fabro".to_string(),
+                types::ManifestWorkflow {
+                    config: None,
+                    files: HashMap::new(),
+                    source:
+                        "digraph Demo { start [shape=Mdiamond] exit [shape=Msquare] start -> exit }"
+                            .to_string(),
+                },
+            )]),
         }
     }
 
     fn invalid_manifest() -> types::RunManifest {
         types::RunManifest {
-            workflows: HashMap::from([("workflow.fabro".to_string(), types::ManifestWorkflow {
-                config: None,
-                files:  HashMap::new(),
-                source: "digraph Invalid { exit [shape=Msquare] orphan exit -> orphan }"
-                    .to_string(),
-            })]),
+            workflows: HashMap::from([(
+                "workflow.fabro".to_string(),
+                types::ManifestWorkflow {
+                    config: None,
+                    files: HashMap::new(),
+                    source: "digraph Invalid { exit [shape=Msquare] orphan exit -> orphan }"
+                        .to_string(),
+                },
+            )]),
             ..minimal_manifest()
         }
     }
@@ -1348,7 +1379,7 @@ mod tests {
     fn manifest_workflow() -> types::ManifestWorkflow {
         types::ManifestWorkflow {
             config: None,
-            files:  HashMap::new(),
+            files: HashMap::new(),
             source: "digraph Demo { start [shape=Mdiamond] exit [shape=Msquare] start -> exit }"
                 .to_string(),
         }
@@ -1357,20 +1388,20 @@ mod tests {
     fn manifest_file(content: &str) -> types::ManifestFileEntry {
         types::ManifestFileEntry {
             content: content.to_string(),
-            ref_:    types::ManifestFileRef {
-                from:     Some("workflow.fabro".to_string()),
+            ref_: types::ManifestFileRef {
+                from: Some("workflow.fabro".to_string()),
                 original: "prompt.md".to_string(),
-                type_:    types::ManifestFileRefType::FileInline,
+                type_: types::ManifestFileRefType::FileInline,
             },
         }
     }
 
     fn git_context(origin_url: &str, branch: &str) -> types::GitContext {
         types::GitContext {
-            origin_url:   origin_url.to_string(),
-            branch:       branch.to_string(),
-            sha:          None,
-            dirty:        fabro_types::DirtyStatus::Clean,
+            origin_url: origin_url.to_string(),
+            branch: branch.to_string(),
+            sha: None,
+            dirty: fabro_types::DirtyStatus::Clean,
             push_outcome: fabro_types::PreRunPushOutcome::NotAttempted,
         }
     }
@@ -1383,7 +1414,7 @@ mod tests {
         let mut manifest = minimal_manifest();
         manifest.git = git;
         manifest.configs.push(types::ManifestConfig {
-            path:   Some("/tmp/project/.fabro/project.toml".to_string()),
+            path: Some("/tmp/project/.fabro/project.toml".to_string()),
             source: Some(format!(
                 r#"
 _version = 1
@@ -1395,7 +1426,7 @@ provider = "{provider}"
 skip_clone = {skip_clone}
 "#
             )),
-            type_:  types::ManifestConfigType::Project,
+            type_: types::ManifestConfigType::Project,
         });
 
         let prepared = prepare_manifest(
@@ -1510,10 +1541,13 @@ skip_clone = {skip_clone}
         .await;
 
         assert!(ok);
-        assert_eq!(calls.lock().unwrap().as_slice(), [GitRemoteRefCheck {
-            origin_url: "https://github.com/acme/widgets".to_string(),
-            branch:     Some("feature/demo".to_string()),
-        }]);
+        assert_eq!(
+            calls.lock().unwrap().as_slice(),
+            [GitRemoteRefCheck {
+                origin_url: "https://github.com/acme/widgets".to_string(),
+                branch: Some("feature/demo".to_string()),
+            }]
+        );
         assert_eq!(checks.len(), 1);
         assert_eq!(checks[0].name, "Repository Access");
         assert_eq!(checks[0].status, CheckStatus::Pass);
@@ -1657,16 +1691,16 @@ root = "/srv/fabro"
         )));
         let mut manifest = minimal_manifest();
         manifest.args = Some(types::ManifestArgs {
-            auto_approve:     None,
-            dry_run:          Some(true),
-            label:            Vec::new(),
-            model:            None,
+            auto_approve: None,
+            dry_run: Some(true),
+            label: Vec::new(),
+            model: None,
             preserve_sandbox: None,
-            provider:         None,
-            sandbox:          None,
-            docker_image:     None,
-            input:            Vec::new(),
-            verbose:          None,
+            provider: None,
+            sandbox: None,
+            docker_image: None,
+            input: Vec::new(),
+            verbose: None,
         });
 
         let prepared = prepare_manifest(&server_settings, &manifest).unwrap();
@@ -1690,16 +1724,16 @@ override = "server"
         )));
         let mut manifest = minimal_manifest();
         manifest.args = Some(types::ManifestArgs {
-            auto_approve:     None,
-            dry_run:          None,
-            label:            Vec::new(),
-            model:            None,
+            auto_approve: None,
+            dry_run: None,
+            label: Vec::new(),
+            model: None,
             preserve_sandbox: None,
-            provider:         None,
-            sandbox:          None,
-            docker_image:     None,
-            input:            vec!["override=cli".to_string()],
-            verbose:          None,
+            provider: None,
+            sandbox: None,
+            docker_image: None,
+            input: vec!["override=cli".to_string()],
+            verbose: None,
         });
 
         let prepared = prepare_manifest(&server_settings, &manifest).unwrap();
@@ -1734,7 +1768,7 @@ app_id = "fixture-app-id"
         let mut manifest = minimal_manifest();
         manifest.workflows.get_mut("workflow.fabro").unwrap().config =
             Some(types::ManifestWorkflowConfig {
-                path:   "workflow.toml".to_string(),
+                path: "workflow.toml".to_string(),
                 source: r#"
 _version = 1
 
@@ -1744,7 +1778,7 @@ script = "workflow-setup"
                 .to_string(),
             });
         manifest.configs.push(types::ManifestConfig {
-            path:   Some("/tmp/home/.fabro/settings.toml".to_string()),
+            path: Some("/tmp/home/.fabro/settings.toml".to_string()),
             source: Some(
                 r#"
 _version = 1
@@ -1760,7 +1794,7 @@ app_id = "fixture-app-id"
 "#
                 .to_string(),
             ),
-            type_:  types::ManifestConfigType::User,
+            type_: types::ManifestConfigType::User,
         });
 
         let prepared = prepare_manifest(&server_settings, &manifest).unwrap();
@@ -1768,9 +1802,10 @@ app_id = "fixture-app-id"
 
         // v2 merge matrix: run.prepare.steps replaces the whole list across
         // layers, so the higher-precedence workflow layer wins over cli.
-        assert_eq!(prepared.settings.run.prepare.commands, vec![
-            "workflow-setup".to_string()
-        ]);
+        assert_eq!(
+            prepared.settings.run.prepare.commands,
+            vec!["workflow-setup".to_string()]
+        );
         assert!(settings_json.pointer("/server").is_none());
     }
 
@@ -1810,7 +1845,7 @@ app_id = "fixture-app-id"
         let mut manifest = minimal_manifest();
         manifest.workflows.get_mut("workflow.fabro").unwrap().config =
             Some(types::ManifestWorkflowConfig {
-                path:   "workflow.toml".to_string(),
+                path: "workflow.toml".to_string(),
                 source: r#"_version = 1
 
 [run.sandbox]
@@ -1854,7 +1889,7 @@ issues = "read"
         let state = crate::test_support::test_app_state();
         let mut manifest = minimal_manifest();
         manifest.configs.push(types::ManifestConfig {
-            path:   Some("/tmp/project/.fabro/project.toml".to_string()),
+            path: Some("/tmp/project/.fabro/project.toml".to_string()),
             source: Some(
                 r#"
 _version = 1
@@ -1867,7 +1902,7 @@ provider = "local"
 "#
                 .to_string(),
             ),
-            type_:  types::ManifestConfigType::Project,
+            type_: types::ManifestConfigType::Project,
         });
 
         let prepared = prepare_manifest(
@@ -1898,7 +1933,7 @@ provider = "local"
         let state = crate::test_support::test_app_state();
         let mut manifest = minimal_manifest();
         manifest.configs.push(types::ManifestConfig {
-            path:   Some("/tmp/project/.fabro/project.toml".to_string()),
+            path: Some("/tmp/project/.fabro/project.toml".to_string()),
             source: Some(
                 r#"
 _version = 1
@@ -1908,7 +1943,7 @@ provider = "daytona"
 "#
                 .to_string(),
             ),
-            type_:  types::ManifestConfigType::Project,
+            type_: types::ManifestConfigType::Project,
         });
 
         let prepared = prepare_manifest(
@@ -1964,7 +1999,7 @@ provider = "daytona"
                 "openai",
                 &serde_json::to_string(&fabro_auth::AuthCredential {
                     provider: Provider::OpenAi,
-                    details:  fabro_auth::AuthDetails::ApiKey {
+                    details: fabro_auth::AuthDetails::ApiKey {
                         key: "test-openai-key".to_string(),
                     },
                 })
@@ -2024,14 +2059,14 @@ digraph Demo {
 
         fn workflow_with_config(source: &str) -> BundledWorkflow {
             BundledWorkflow {
-                path:   ManifestPath::from_wire("workflow.fabro").expect("path should be valid"),
+                path: ManifestPath::from_wire("workflow.fabro").expect("path should be valid"),
                 source: "digraph G {}".to_string(),
                 config: Some(ParsedWorkflowConfig {
-                    path:   ManifestPath::from_wire("workflow.toml")
+                    path: ManifestPath::from_wire("workflow.toml")
                         .expect("config path should be valid"),
                     source: source.to_string(),
                 }),
-                files:  std::collections::HashMap::new(),
+                files: std::collections::HashMap::new(),
             }
         }
 

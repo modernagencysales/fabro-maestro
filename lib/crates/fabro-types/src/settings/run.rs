@@ -238,9 +238,18 @@ pub struct DockerSettings {
 pub struct DaytonaSettings {
     pub auto_stop_interval: Option<i32>,
     pub labels:             HashMap<String, String>,
+    #[serde(default)]
+    pub volumes:            Vec<DaytonaVolumeSettings>,
     pub snapshot:           Option<DaytonaSnapshotSettings>,
     pub network:            Option<DaytonaNetworkLayer>,
     pub skip_clone:         bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DaytonaVolumeSettings {
+    pub volume_id:  String,
+    pub mount_path: String,
+    pub subpath:    Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

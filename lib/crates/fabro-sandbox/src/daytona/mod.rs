@@ -51,13 +51,13 @@ pub const REQUIRED_DAYTONA_PERMISSIONS: &[Permissions] = &[
 
 pub use crate::config::{
     DaytonaNetwork, DaytonaSettings as DaytonaConfig,
-    DaytonaSnapshotSettings as DaytonaSnapshotConfig, DockerfileSource,
+    DaytonaSnapshotSettings as DaytonaSnapshotConfig, DaytonaVolumeMount, DockerfileSource,
 };
 
 #[derive(Debug)]
 pub struct DaytonaKeyCheck {
     pub key_name: String,
-    pub missing:  Vec<Permissions>,
+    pub missing: Vec<Permissions>,
 }
 
 impl DaytonaKeyCheck {
@@ -194,13 +194,13 @@ fn build_api_keys_configuration(
     http_client: fabro_http::HttpClient,
 ) -> Configuration {
     Configuration {
-        base_path:           base_url.to_string(),
-        user_agent:          Some(FABRO_SANDBOX_USER_AGENT.to_string()),
-        client:              reqwest_middleware::ClientBuilder::new(http_client).build(),
-        basic_auth:          None,
-        oauth_access_token:  None,
+        base_path: base_url.to_string(),
+        user_agent: Some(FABRO_SANDBOX_USER_AGENT.to_string()),
+        client: reqwest_middleware::ClientBuilder::new(http_client).build(),
+        basic_auth: None,
+        oauth_access_token: None,
         bearer_access_token: Some(api_key.to_string()),
-        api_key:             None,
+        api_key: None,
     }
 }
 
@@ -223,21 +223,21 @@ fn command_kind(command: &str) -> &'static str {
 
 /// Sandbox that runs all operations inside a Daytona cloud sandbox.
 pub struct DaytonaSandbox {
-    config:           DaytonaConfig,
-    client:           daytona_sdk::Client,
-    github_app:       Option<GitHubCredentials>,
-    sandbox:          OnceCell<daytona_sdk::Sandbox>,
-    rg_available:     OnceCell<bool>,
-    event_callback:   Option<SandboxEventCallback>,
+    config: DaytonaConfig,
+    client: daytona_sdk::Client,
+    github_app: Option<GitHubCredentials>,
+    sandbox: OnceCell<daytona_sdk::Sandbox>,
+    rg_available: OnceCell<bool>,
+    event_callback: Option<SandboxEventCallback>,
     /// HTTPS origin URL stored after clone so we can refresh push credentials
     /// later.
-    origin_url:       OnceCell<String>,
-    repo_cloned:      OnceCell<bool>,
-    run_id:           Option<RunId>,
+    origin_url: OnceCell<String>,
+    repo_cloned: OnceCell<bool>,
+    run_id: Option<RunId>,
     clone_origin_url: Option<String>,
     /// Explicit branch to clone. When set, overrides the branch detected by
     /// the submitted run spec.
-    clone_branch:     Option<String>,
+    clone_branch: Option<String>,
 }
 
 impl DaytonaSandbox {
@@ -437,6 +437,17 @@ impl DaytonaSandbox {
             labels: self.config.labels.clone(),
             auto_delete_interval: Some(-1),
             ephemeral: Some(false),
+            volumes: (!self.config.volumes.is_empty()).then(|| {
+                self.config
+                    .volumes
+                    .iter()
+                    .map(|volume| daytona_sdk::VolumeMount {
+                        volume_id: volume.volume_id.clone(),
+                        mount_path: volume.mount_path.clone(),
+                        subpath: volume.subpath.clone(),
+                    })
+                    .collect()
+            }),
             network_block_all,
             network_allow_list,
             ..Default::default()
@@ -492,11 +503,11 @@ impl DaytonaSandbox {
                 });
 
                 let params = daytona_sdk::CreateSnapshotParams {
-                    name:       snap_cfg.name.clone(),
-                    image:      daytona_sdk::ImageSource::Custom(
+                    name: snap_cfg.name.clone(),
+                    image: daytona_sdk::ImageSource::Custom(
                         daytona_sdk::DockerImage::from_dockerfile(dockerfile),
                     ),
-                    resources:  Some(daytona_sdk::Resources {
+                    resources: Some(daytona_sdk::Resources {
                         cpu: snap_cfg.cpu,
                         memory: snap_cfg.memory,
                         disk: snap_cfg.disk,
@@ -664,25 +675,25 @@ impl Sandbox for DaytonaSandbox {
             let snap_start = Instant::now();
             if let Err(e) = self.ensure_snapshot(snap_cfg).await {
                 self.emit(SandboxEvent::SnapshotFailed {
-                    name:   snap_cfg.name.clone(),
-                    error:  e.to_string(),
+                    name: snap_cfg.name.clone(),
+                    error: e.to_string(),
                     causes: e.causes(),
                 });
                 return Err(self.fail_init(init_start, e));
             }
             let snap_duration = u64::try_from(snap_start.elapsed().as_millis()).unwrap_or(u64::MAX);
             self.emit(SandboxEvent::SnapshotReady {
-                name:        snap_cfg.name.clone(),
+                name: snap_cfg.name.clone(),
                 duration_ms: snap_duration,
             });
 
             daytona_sdk::CreateParams::Snapshot(daytona_sdk::SnapshotParams {
-                base:     self.base_params(),
+                base: self.base_params(),
                 snapshot: snap_cfg.name.clone(),
             })
         } else {
             daytona_sdk::CreateParams::Snapshot(daytona_sdk::SnapshotParams {
-                base:     self.base_params(),
+                base: self.base_params(),
                 snapshot: DEFAULT_SNAPSHOT.to_string(),
             })
         };
@@ -727,7 +738,7 @@ impl Sandbox for DaytonaSandbox {
             }
             CloneDecision::GitHub { origin_url, branch } => {
                 self.emit(SandboxEvent::GitCloneStarted {
-                    url:    origin_url.clone(),
+                    url: origin_url.clone(),
                     branch: branch.clone(),
                 });
                 let clone_start = Instant::now();
@@ -740,8 +751,8 @@ impl Sandbox for DaytonaSandbox {
                                     "Failed to parse GitHub URL for clone: {e}"
                                 ));
                                 self.emit(SandboxEvent::GitCloneFailed {
-                                    url:    origin_url.clone(),
-                                    error:  err.to_string(),
+                                    url: origin_url.clone(),
+                                    error: err.to_string(),
                                     causes: err.causes(),
                                 });
                                 err
@@ -760,8 +771,8 @@ impl Sandbox for DaytonaSandbox {
                                 "Failed to get GitHub App credentials for clone: {e}"
                             ));
                             self.emit(SandboxEvent::GitCloneFailed {
-                                url:    origin_url.clone(),
-                                error:  err.to_string(),
+                                url: origin_url.clone(),
+                                error: err.to_string(),
                                 causes: err.causes(),
                             });
                             self.fail_init(init_start, err)
@@ -773,8 +784,8 @@ impl Sandbox for DaytonaSandbox {
                 let git_svc = sandbox.git().await.map_err(|e| {
                     let err = crate::Error::context("Failed to get Daytona git service", e);
                     self.emit(SandboxEvent::GitCloneFailed {
-                        url:    origin_url.clone(),
-                        error:  err.to_string(),
+                        url: origin_url.clone(),
+                        error: err.to_string(),
                         causes: err.causes(),
                     });
                     self.fail_init(init_start, err)
@@ -799,7 +810,7 @@ impl Sandbox for DaytonaSandbox {
                         let clone_duration =
                             u64::try_from(clone_start.elapsed().as_millis()).unwrap_or(u64::MAX);
                         self.emit(SandboxEvent::GitCloneCompleted {
-                            url:         origin_url.clone(),
+                            url: origin_url.clone(),
                             duration_ms: clone_duration,
                         });
 
@@ -824,12 +835,12 @@ impl Sandbox for DaytonaSandbox {
                                                 let err = crate::Error::exec(
                                                     "git remote set-url origin (Daytona post-clone)",
                                                     ExecResult {
-                                                        stdout:      String::new(),
-                                                        stderr:      redact_auth_url(
+                                                        stdout: String::new(),
+                                                        stderr: redact_auth_url(
                                                             &r.result,
                                                             Some(&auth_url),
                                                         ),
-                                                        exit_code:   Some(r.exit_code),
+                                                        exit_code: Some(r.exit_code),
                                                         termination: CommandTermination::Exited,
                                                         duration_ms: 0,
                                                     },
@@ -872,8 +883,8 @@ impl Sandbox for DaytonaSandbox {
                             e,
                         );
                         self.emit(SandboxEvent::GitCloneFailed {
-                            url:    origin_url,
-                            error:  err.to_string(),
+                            url: origin_url,
+                            error: err.to_string(),
                             causes: err.causes(),
                         });
                         return Err(self.fail_init(init_start, err));
@@ -882,8 +893,8 @@ impl Sandbox for DaytonaSandbox {
                         let err =
                             crate::Error::context("Failed to clone repo into Daytona sandbox", e);
                         self.emit(SandboxEvent::GitCloneFailed {
-                            url:    origin_url,
-                            error:  err.to_string(),
+                            url: origin_url,
+                            error: err.to_string(),
                             causes: err.causes(),
                         });
                         return Err(self.fail_init(init_start, err));
@@ -902,12 +913,12 @@ impl Sandbox for DaytonaSandbox {
 
         let init_duration = u64::try_from(init_start.elapsed().as_millis()).unwrap_or(u64::MAX);
         self.emit(SandboxEvent::Ready {
-            provider:    "daytona".into(),
+            provider: "daytona".into(),
             duration_ms: init_duration,
-            name:        Some(sandbox_name),
-            cpu:         Some(sandbox_cpu),
-            memory:      Some(sandbox_memory),
-            url:         Some("https://app.daytona.io/dashboard/sandboxes".into()),
+            name: Some(sandbox_name),
+            cpu: Some(sandbox_cpu),
+            memory: Some(sandbox_memory),
+            url: Some("https://app.daytona.io/dashboard/sandboxes".into()),
         });
 
         Ok(())
@@ -923,8 +934,8 @@ impl Sandbox for DaytonaSandbox {
             let err = crate::Error::context("Failed to start Daytona sandbox", e);
             self.emit(SandboxEvent::StartFailed {
                 provider: "daytona".into(),
-                error:    err.to_string(),
-                causes:   err.causes(),
+                error: err.to_string(),
+                causes: err.causes(),
             });
             return Err(err);
         }
@@ -946,8 +957,8 @@ impl Sandbox for DaytonaSandbox {
             let err = crate::Error::context("Failed to stop Daytona sandbox", e);
             self.emit(SandboxEvent::StopFailed {
                 provider: "daytona".into(),
-                error:    err.to_string(),
-                causes:   err.causes(),
+                error: err.to_string(),
+                causes: err.causes(),
             });
             return Err(err);
         }
@@ -970,8 +981,8 @@ impl Sandbox for DaytonaSandbox {
                 let err = crate::Error::context("Failed to delete Daytona sandbox", e);
                 self.emit(SandboxEvent::DeleteFailed {
                     provider: "daytona".into(),
-                    error:    err.to_string(),
-                    causes:   err.causes(),
+                    error: err.to_string(),
+                    causes: err.causes(),
                 });
                 return Err(err);
             }
@@ -1243,9 +1254,9 @@ impl Sandbox for DaytonaSandbox {
         Ok(files
             .into_iter()
             .map(|f| DirEntry {
-                name:   f.name,
+                name: f.name,
                 is_dir: f.is_dir,
-                size:   if f.size > 0 {
+                size: if f.size > 0 {
                     u64::try_from(f.size).ok()
                 } else {
                     None
@@ -1286,8 +1297,8 @@ impl Sandbox for DaytonaSandbox {
         );
 
         let options = daytona_sdk::ExecuteCommandOptions {
-            cwd:     Some(cwd),
-            env:     env_vars.cloned(),
+            cwd: Some(cwd),
+            env: env_vars.cloned(),
             timeout: Some(std::time::Duration::from_millis(timeout_ms)),
         };
 
@@ -1691,8 +1702,8 @@ async fn finish_daytona_log_stream(
 /// `fabro-workflow`).
 struct DaytonaSession {
     process_svc: Option<daytona_sdk::ProcessService>,
-    session_id:  String,
-    active:      bool,
+    session_id: String,
+    active: bool,
 }
 
 impl DaytonaSession {
@@ -1814,9 +1825,9 @@ impl Drop for DaytonaSession {
 }
 
 struct WaitOutcome {
-    exit_code:   Option<i32>,
+    exit_code: Option<i32>,
     termination: CommandTermination,
-    final_logs:  Option<SessionCommandLogsResult>,
+    final_logs: Option<SessionCommandLogsResult>,
 }
 
 /// Wait for the session command to terminate by polling status, the timeout
@@ -1832,9 +1843,9 @@ async fn wait_for_completion(
 ) -> crate::Result<WaitOutcome> {
     if let Some(code) = initial_exit_code {
         return Ok(WaitOutcome {
-            exit_code:   Some(code),
+            exit_code: Some(code),
             termination: CommandTermination::Exited,
-            final_logs:  None,
+            final_logs: None,
         });
     }
 
@@ -2083,7 +2094,7 @@ mod tests {
     fn missing_display_uses_daytona_wire_scope_names() {
         let check = DaytonaKeyCheck {
             key_name: "delete-only".to_string(),
-            missing:  vec![
+            missing: vec![
                 Permissions::WriteColonSnapshots,
                 Permissions::WriteColonSandboxes,
             ],
@@ -2106,11 +2117,10 @@ mod tests {
     async fn check_daytona_api_key_with_reports_missing_scopes() {
         let server = MockServer::start_async().await;
         let auth = mock_auth_probe(&server, 200).await;
-        let current_key = mock_current_key(&server, vec![
-            "delete:snapshots",
-            "delete:sandboxes",
-            "delete:volumes",
-        ])
+        let current_key = mock_current_key(
+            &server,
+            vec!["delete:snapshots", "delete:sandboxes", "delete:volumes"],
+        )
         .await;
 
         let check = check_daytona_api_key_with(
@@ -2133,12 +2143,15 @@ mod tests {
     async fn check_daytona_api_key_with_accepts_full_scopes() {
         let server = MockServer::start_async().await;
         let auth = mock_auth_probe(&server, 200).await;
-        let current_key = mock_current_key(&server, vec![
-            "write:snapshots",
-            "delete:snapshots",
-            "write:sandboxes",
-            "delete:sandboxes",
-        ])
+        let current_key = mock_current_key(
+            &server,
+            vec![
+                "write:snapshots",
+                "delete:snapshots",
+                "write:sandboxes",
+                "delete:sandboxes",
+            ],
+        )
         .await;
 
         let check = check_daytona_api_key_with(
@@ -2312,6 +2325,25 @@ mod tests {
                 "172.16.0.0/12".into(),
             ]))
         );
+    }
+
+    #[test]
+    fn parses_volume_mounts_from_config() {
+        let config: DaytonaConfig = toml::from_str(
+            r#"
+[[volumes]]
+volume_id = "vol-maestro-agent-auth"
+mount_path = "/home/daytona/agent-state"
+subpath = "agent-auth"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.volumes.len(), 1);
+        let volume = &config.volumes[0];
+        assert_eq!(volume.volume_id, "vol-maestro-agent-auth");
+        assert_eq!(volume.mount_path, "/home/daytona/agent-state");
+        assert_eq!(volume.subpath.as_deref(), Some("agent-auth"));
     }
 
     #[test]
