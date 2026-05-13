@@ -379,12 +379,8 @@ impl RunSession {
             }
         };
 
-        let toml_env: HashMap<String, String> = resolved
-            .sandbox
-            .env
-            .iter()
-            .map(|(k, v)| (k.clone(), resolve_interp(v)))
-            .collect();
+        let toml_env =
+            resolve_sandbox_toml_env(&resolved.sandbox.env, services.vault.as_ref()).await;
         let github_permissions: Option<HashMap<String, String>> =
             (!services.github_permissions.is_empty()).then(|| services.github_permissions.clone());
         let sandbox_env = SandboxEnvSpec {
@@ -454,8 +450,34 @@ impl RunSession {
 }
 
 fn resolve_interp(value: &InterpString) -> String {
+    resolve_interp_with_lookup(value, process_env_var)
+}
+
+async fn resolve_sandbox_toml_env(
+    env: &HashMap<String, InterpString>,
+    vault: Option<&Arc<AsyncRwLock<Vault>>>,
+) -> HashMap<String, String> {
+    let vault_env = match vault {
+        Some(vault) => vault.read().await.snapshot(),
+        None => HashMap::new(),
+    };
+
+    env.iter()
+        .map(|(key, value)| {
+            let resolved = resolve_interp_with_lookup(value, |name| {
+                process_env_var(name).or_else(|| vault_env.get(name).cloned())
+            });
+            (key.clone(), resolved)
+        })
+        .collect()
+}
+
+fn resolve_interp_with_lookup<F>(value: &InterpString, lookup: F) -> String
+where
+    F: FnMut(&str) -> Option<String>,
+{
     value
-        .resolve(process_env_var)
+        .resolve(lookup)
         .map_or_else(|_| value.as_source(), |resolved| resolved.value)
 }
 
@@ -1088,6 +1110,32 @@ mod tests {
         registry.register("exit", Box::new(ExitHandler));
         registry.register("stack.manager_loop", Box::new(SubWorkflowHandler));
         registry
+    }
+
+    #[tokio::test]
+    async fn sandbox_toml_env_resolves_environment_secrets_from_vault() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut vault = Vault::load(temp.path().join("vault.json")).unwrap();
+        vault
+            .set(
+                "APIFY_TOKEN",
+                "vault-apify-token",
+                fabro_vault::SecretType::Environment,
+                None,
+            )
+            .unwrap();
+        let vault = Arc::new(AsyncRwLock::new(vault));
+        let input = HashMap::from([(
+            "APIFY_TOKEN".to_string(),
+            InterpString::parse("{{ env.APIFY_TOKEN }}"),
+        )]);
+
+        let resolved = resolve_sandbox_toml_env(&input, Some(&vault)).await;
+
+        assert_eq!(
+            resolved.get("APIFY_TOKEN").map(String::as_str),
+            Some("vault-apify-token")
+        );
     }
 
     async fn test_start_services(
