@@ -9,13 +9,13 @@ use crate::server_runs::ServerRunSummaryInfo;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct InspectOutput {
-    pub run_id:       String,
-    pub status:       RunStatus,
-    pub run_spec:     Option<serde_json::Value>,
+    pub run_id: String,
+    pub status: RunStatus,
+    pub run_spec: Option<serde_json::Value>,
     pub start_record: Option<serde_json::Value>,
-    pub conclusion:   Option<serde_json::Value>,
-    pub checkpoint:   Option<serde_json::Value>,
-    pub sandbox:      Option<serde_json::Value>,
+    pub conclusion: Option<serde_json::Value>,
+    pub checkpoint: Option<serde_json::Value>,
+    pub sandbox: Option<serde_json::Value>,
 }
 
 pub(crate) async fn run(args: &InspectArgs, base_ctx: &CommandContext) -> Result<()> {

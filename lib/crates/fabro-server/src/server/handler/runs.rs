@@ -27,10 +27,11 @@ use tokio::fs;
 use tracing::info;
 
 use super::super::{
-    AppState, ListResponse, MAX_PAGE_OFFSET, PaginationParams, RunExecutionMode,
-    answer_from_request, api_question_from_pending_interview, default_page_limit,
-    delete_run_internal, load_pending_interview, managed_run, parse_run_id_path,
-    reject_if_archived, resolve_interp_string, submit_pending_interview_answer, workflow_event,
+    AppState, GateDecision, ListResponse, MAX_PAGE_OFFSET, PaginationParams, RunExecutionMode,
+    answer_from_gate_decision, answer_from_request, api_question_from_pending_interview,
+    default_page_limit, delete_run_internal, load_pending_interview, managed_run,
+    parse_run_id_path, reject_if_archived, resolve_interp_string, submit_pending_interview_answer,
+    workflow_event,
 };
 use crate::error::ApiError;
 use crate::principal_middleware::{
@@ -57,6 +58,10 @@ pub(super) fn routes() -> Router<Arc<AppState>> {
         )
         .route("/runs/{id}/questions", get(get_questions))
         .route("/runs/{id}/questions/{qid}/answer", post(submit_answer))
+        .route(
+            "/runs/{id}/gates/{gate_id}/decision",
+            post(submit_gate_decision),
+        )
         .route("/runs/{id}/state", get(get_run_state))
         .route("/runs/{id}/logs", get(get_run_logs))
         .route(
@@ -72,17 +77,24 @@ pub(super) fn routes() -> Router<Arc<AppState>> {
 #[derive(serde::Deserialize)]
 struct ListRunsParams {
     #[serde(rename = "page[limit]", default = "default_page_limit")]
-    limit:            u32,
+    limit: u32,
     #[serde(rename = "page[offset]", default)]
-    offset:           u32,
+    offset: u32,
     #[serde(default)]
     include_archived: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct GateDecisionRequest {
+    decision: GateDecision,
+    #[serde(default)]
+    payload: serde_json::Value,
 }
 
 impl ListRunsParams {
     fn pagination(&self) -> PaginationParams {
         PaginationParams {
-            limit:  self.limit,
+            limit: self.limit,
             offset: self.offset,
         }
     }
@@ -106,33 +118,33 @@ fn board_column(status: RunStatus, archived: bool) -> Option<BoardColumn> {
 pub(crate) fn board_columns(include_archived: bool) -> Vec<BoardColumnDefinition> {
     let mut columns = vec![
         BoardColumnDefinition {
-            id:   BoardColumn::Queued,
+            id: BoardColumn::Queued,
             name: "Queued".into(),
         },
         BoardColumnDefinition {
-            id:   BoardColumn::Initializing,
+            id: BoardColumn::Initializing,
             name: "Initializing".into(),
         },
         BoardColumnDefinition {
-            id:   BoardColumn::Running,
+            id: BoardColumn::Running,
             name: "Running".into(),
         },
         BoardColumnDefinition {
-            id:   BoardColumn::Blocked,
+            id: BoardColumn::Blocked,
             name: "Blocked".into(),
         },
         BoardColumnDefinition {
-            id:   BoardColumn::Succeeded,
+            id: BoardColumn::Succeeded,
             name: "Succeeded".into(),
         },
         BoardColumnDefinition {
-            id:   BoardColumn::Failed,
+            id: BoardColumn::Failed,
             name: "Failed".into(),
         },
     ];
     if include_archived {
         columns.push(BoardColumnDefinition {
-            id:   BoardColumn::Archived,
+            id: BoardColumn::Archived,
             name: "Archived".into(),
         });
     }
@@ -247,17 +259,17 @@ struct CommandLogQuery {
     #[serde(default)]
     offset: u64,
     #[serde(default = "default_command_log_limit")]
-    limit:  u64,
+    limit: u64,
 }
 
 #[derive(Debug, serde::Serialize)]
 struct CommandLogResponseBody {
-    offset:         u64,
-    next_offset:    u64,
-    total_bytes:    u64,
-    bytes_base64:   String,
-    eof:            bool,
-    cas_ref:        Option<String>,
+    offset: u64,
+    next_offset: u64,
+    total_bytes: u64,
+    bytes_base64: String,
+    eof: bool,
+    cas_ref: Option<String>,
     live_streaming: bool,
 }
 
@@ -359,12 +371,15 @@ async fn update_run(
                 .into_response();
         }
     };
-    if let Err(err) =
-        workflow_event::append_event(&run_store, &id, &workflow_event::Event::RunTitleUpdated {
+    if let Err(err) = workflow_event::append_event(
+        &run_store,
+        &id,
+        &workflow_event::Event::RunTitleUpdated {
             title,
             actor: Some(Principal::User(subject.0)),
-        })
-        .await
+        },
+    )
+    .await
     {
         return ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
     }
@@ -466,10 +481,10 @@ async fn create_run(
 
 fn run_provenance(headers: &HeaderMap, subject: &UserPrincipal) -> RunProvenance {
     RunProvenance {
-        server:  Some(RunServerProvenance {
+        server: Some(RunServerProvenance {
             version: FABRO_VERSION.to_string(),
         }),
-        client:  run_client_provenance(headers),
+        client: run_client_provenance(headers),
         subject: Some(Principal::User(subject.clone())),
     }
 }
@@ -649,6 +664,34 @@ async fn submit_answer(
     }
 }
 
+async fn submit_gate_decision(
+    auth: RequiredUser,
+    State(state): State<Arc<AppState>>,
+    Path((id, gate_id)): Path<(String, String)>,
+    Json(req): Json<GateDecisionRequest>,
+) -> Response {
+    let id = match parse_run_id_path(&id) {
+        Ok(id) => id,
+        Err(response) => return response,
+    };
+    if let Some(response) = reject_if_archived(state.as_ref(), &id).await {
+        return response;
+    }
+    let pending = match load_pending_interview(state.as_ref(), id, &gate_id).await {
+        Ok(pending) => pending,
+        Err(response) => return response,
+    };
+    let answer = match answer_from_gate_decision(req.decision, &req.payload, &pending.question) {
+        Ok(answer) => answer,
+        Err(response) => return response,
+    };
+    let submission = AnswerSubmission::new(answer, Principal::User(auth.0));
+    match submit_pending_interview_answer(state.as_ref(), &pending, submission).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(response) => response,
+    }
+}
+
 async fn get_run_state(
     RequireRunScoped(id): RequireRunScoped,
     State(state): State<Arc<AppState>>,
@@ -782,10 +825,7 @@ async fn get_run_stage_command_log(
 }
 
 enum LogSource<'a> {
-    Sliced {
-        bytes:       Vec<u8>,
-        total_bytes: u64,
-    },
+    Sliced { bytes: Vec<u8>, total_bytes: u64 },
     Full(&'a [u8]),
 }
 

@@ -356,7 +356,7 @@ fn parse_version_from_tag(tag: &str) -> Result<Version> {
 struct ReleaseSummary {
     tag_name: String,
     #[serde(default)]
-    draft:    bool,
+    draft: bool,
 }
 
 /// Pick the `tag_name` with the highest semver from `releases`, skipping
@@ -404,7 +404,7 @@ const LAST_CHECK_FILE: &str = "last_upgrade_check.json";
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct UpgradeCheckState {
-    checked_at:     u64,
+    checked_at: u64,
     latest_version: String,
     #[serde(default)]
     install_source: Option<String>,
@@ -714,7 +714,7 @@ async fn check_and_print_notice(printer: Printer) -> Result<()> {
         .unwrap_or_default()
         .as_secs();
     let state = UpgradeCheckState {
-        checked_at:     now,
+        checked_at: now,
         latest_version: latest.to_string(),
         install_source: Some(source.cache_tag().to_string()),
     };
@@ -845,7 +845,7 @@ mod tests {
     #[test]
     fn upgrade_check_state_roundtrip() {
         let state = UpgradeCheckState {
-            checked_at:     1_710_000_000,
+            checked_at: 1_710_000_000,
             latest_version: "0.5.0".to_string(),
             install_source: Some("tarball".to_string()),
         };
@@ -859,7 +859,7 @@ mod tests {
     #[test]
     fn upgrade_check_state_stale() {
         let old = UpgradeCheckState {
-            checked_at:     0, // epoch — definitely stale
+            checked_at: 0, // epoch — definitely stale
             latest_version: "0.1.0".to_string(),
             install_source: Some("tarball".to_string()),
         };
@@ -869,7 +869,7 @@ mod tests {
     #[test]
     fn upgrade_check_state_fresh() {
         let fresh = UpgradeCheckState {
-            checked_at:     now_secs(),
+            checked_at: now_secs(),
             latest_version: "0.5.0".to_string(),
             install_source: Some("tarball".to_string()),
         };
@@ -881,7 +881,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.json");
         let state = UpgradeCheckState {
-            checked_at:     1_710_000_000,
+            checked_at: 1_710_000_000,
             latest_version: "0.5.0".to_string(),
             install_source: Some("brew-stable".to_string()),
         };
@@ -973,33 +973,45 @@ mod tests {
     #[test]
     fn detect_install_source_macos_arm_cellar() {
         let p = PathBuf::from("/opt/homebrew/Cellar/fabro/0.176.2/bin/fabro");
-        assert_eq!(detect_install_source(&p), InstallSource::Brew {
-            channel: BrewChannel::Stable,
-        });
+        assert_eq!(
+            detect_install_source(&p),
+            InstallSource::Brew {
+                channel: BrewChannel::Stable,
+            }
+        );
     }
 
     #[test]
     fn detect_install_source_macos_intel_cellar() {
         let p = PathBuf::from("/usr/local/Cellar/fabro/0.176.2/bin/fabro");
-        assert_eq!(detect_install_source(&p), InstallSource::Brew {
-            channel: BrewChannel::Stable,
-        });
+        assert_eq!(
+            detect_install_source(&p),
+            InstallSource::Brew {
+                channel: BrewChannel::Stable,
+            }
+        );
     }
 
     #[test]
     fn detect_install_source_linuxbrew() {
         let p = PathBuf::from("/home/linuxbrew/.linuxbrew/Cellar/fabro/0.176.2/bin/fabro");
-        assert_eq!(detect_install_source(&p), InstallSource::Brew {
-            channel: BrewChannel::Stable,
-        });
+        assert_eq!(
+            detect_install_source(&p),
+            InstallSource::Brew {
+                channel: BrewChannel::Stable,
+            }
+        );
     }
 
     #[test]
     fn detect_install_source_nightly() {
         let p = PathBuf::from("/opt/homebrew/Cellar/fabro-nightly/0.205.0-nightly.0/bin/fabro");
-        assert_eq!(detect_install_source(&p), InstallSource::Brew {
-            channel: BrewChannel::Nightly,
-        });
+        assert_eq!(
+            detect_install_source(&p),
+            InstallSource::Brew {
+                channel: BrewChannel::Nightly,
+            }
+        );
     }
 
     #[test]
@@ -1060,7 +1072,7 @@ mod tests {
     #[test]
     fn cache_is_usable_when_source_matches() {
         let state = UpgradeCheckState {
-            checked_at:     now_secs(),
+            checked_at: now_secs(),
             latest_version: "0.5.0".into(),
             install_source: Some("brew-stable".into()),
         };
@@ -1072,7 +1084,7 @@ mod tests {
     #[test]
     fn cache_ignored_when_channel_differs() {
         let state = UpgradeCheckState {
-            checked_at:     now_secs(),
+            checked_at: now_secs(),
             latest_version: "0.5.0".into(),
             install_source: Some("brew-stable".into()),
         };
@@ -1084,7 +1096,7 @@ mod tests {
     #[test]
     fn cache_ignored_when_source_differs() {
         let state = UpgradeCheckState {
-            checked_at:     now_secs(),
+            checked_at: now_secs(),
             latest_version: "0.5.0".into(),
             install_source: Some("tarball".into()),
         };
@@ -1096,7 +1108,7 @@ mod tests {
     #[test]
     fn legacy_cache_without_install_source_is_not_usable() {
         let state = UpgradeCheckState {
-            checked_at:     now_secs(),
+            checked_at: now_secs(),
             latest_version: "0.5.0".into(),
             install_source: None,
         };

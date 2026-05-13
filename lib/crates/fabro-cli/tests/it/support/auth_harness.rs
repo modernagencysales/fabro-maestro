@@ -41,8 +41,8 @@ pub(crate) const TEST_DEV_TOKEN: &str =
 
 pub(crate) struct RealAuthHarness {
     pub(crate) api_base_url: String,
-    api_server:              RunningHttpServer,
-    twin:                    fabro_test::TwinGitHub,
+    api_server: RunningHttpServer,
+    twin: fabro_test::TwinGitHub,
     pub(crate) api_requests: ListenerRequestLog,
 }
 
@@ -103,14 +103,14 @@ impl RealAuthHarness {
             &auth_mode,
             Arc::new(IpAllowlistConfig::default()),
             RouterOptions {
-                web_enabled:                 true,
-                github_endpoints:            Some(Arc::new(GithubEndpoints::with_bases(
+                web_enabled: true,
+                github_endpoints: Some(Arc::new(GithubEndpoints::with_bases(
                     github_base.clone(),
                     github_base,
                 ))),
                 github_webhook_ip_allowlist: None,
-                static_asset_root:           None,
-                watch_web:                   false,
+                static_asset_root: None,
+                watch_web: false,
             },
         );
 
@@ -254,7 +254,7 @@ pub(crate) fn seed_dev_token_auth(home_dir: &Path, target: &ServerTarget, token:
         .put(
             target,
             AuthEntry::DevToken(DevTokenEntry {
-                token:        token.to_owned(),
+                token: token.to_owned(),
                 logged_in_at: Utc::now(),
             }),
         )
@@ -294,7 +294,7 @@ impl ListenerRequestLog {
 
 struct RunningHttpServer {
     shutdown_tx: Option<oneshot::Sender<()>>,
-    handle:      Option<JoinHandle<()>>,
+    handle: Option<JoinHandle<()>>,
 }
 
 impl RunningHttpServer {
@@ -315,7 +315,7 @@ impl RunningHttpServer {
 
         Self {
             shutdown_tx: Some(shutdown_tx),
-            handle:      Some(handle),
+            handle: Some(handle),
         }
     }
 
@@ -479,15 +479,18 @@ fn auth_store_path(context: &TestContext) -> std::path::PathBuf {
 }
 
 fn expired_access_token(issuer: &str, subject: &serde_json::Map<String, Value>) -> String {
-    issue_expired_test_github_jwt(issuer, TestGithubJwtSubject {
-        idp_issuer:  subject_value(subject, "idp_issuer"),
-        idp_subject: subject_value(subject, "idp_subject"),
-        login:       subject_value(subject, "login"),
-        name:        subject_value(subject, "name"),
-        email:       subject_value(subject, "email"),
-        avatar_url:  String::new(),
-        user_url:    String::new(),
-    })
+    issue_expired_test_github_jwt(
+        issuer,
+        TestGithubJwtSubject {
+            idp_issuer: subject_value(subject, "idp_issuer"),
+            idp_subject: subject_value(subject, "idp_subject"),
+            login: subject_value(subject, "login"),
+            name: subject_value(subject, "name"),
+            email: subject_value(subject, "email"),
+            avatar_url: String::new(),
+            user_url: String::new(),
+        },
+    )
 }
 
 fn read_stderr_and_capture_url(

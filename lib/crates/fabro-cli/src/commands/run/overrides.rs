@@ -12,8 +12,8 @@ use crate::args::{PreflightArgs, RunArgs};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ManifestSettingsOverrides {
-    pub(crate) run:             Option<RunLayer>,
-    pub(crate) cli:             Option<CliLayer>,
+    pub(crate) run: Option<RunLayer>,
+    pub(crate) cli: Option<CliLayer>,
     pub(crate) input_overrides: HashMap<String, toml::Value>,
 }
 
@@ -80,21 +80,21 @@ pub(crate) fn run_args_overrides(args: &RunArgs) -> Result<ManifestSettingsOverr
     let sandbox = args.sandbox.map(SandboxProvider::from);
     let sandbox_provider = sandbox.as_ref().map(ToString::to_string);
     let mut run = build_run_overrides(RunOverrideInput {
-        goal:             None,
-        model:            args.model.as_deref(),
-        provider:         args.provider.as_deref(),
-        sandbox:          sandbox_provider.as_deref(),
-        docker_image:     None,
+        goal: None,
+        model: args.model.as_deref(),
+        provider: args.provider.as_deref(),
+        sandbox: sandbox_provider.as_deref(),
+        docker_image: None,
         preserve_sandbox: sparse_flag(args.preserve_sandbox),
-        dry_run:          sparse_flag(args.dry_run),
-        auto_approve:     sparse_flag(args.auto_approve),
-        labels:           parse_labels(&args.label),
+        dry_run: sparse_flag(args.dry_run),
+        auto_approve: sparse_flag(args.auto_approve),
+        labels: parse_labels(&args.label),
     });
     run.goal = goal;
 
     Ok(ManifestSettingsOverrides {
-        run:             Some(run),
-        cli:             cli_layer_for_verbose(args.verbose),
+        run: Some(run),
+        cli: cli_layer_for_verbose(args.verbose),
         input_overrides: parse_input_overrides(&args.inputs.values)?,
     })
 }
@@ -106,21 +106,21 @@ pub(crate) fn preflight_args_overrides(args: &PreflightArgs) -> Result<ManifestS
         .sandbox
         .map(|sandbox| SandboxProvider::from(sandbox).to_string());
     let mut run = build_run_overrides(RunOverrideInput {
-        goal:             None,
-        model:            args.model.as_deref(),
-        provider:         args.provider.as_deref(),
-        sandbox:          sandbox_provider.as_deref(),
-        docker_image:     None,
+        goal: None,
+        model: args.model.as_deref(),
+        provider: args.provider.as_deref(),
+        sandbox: sandbox_provider.as_deref(),
+        docker_image: None,
         preserve_sandbox: None,
-        dry_run:          None,
-        auto_approve:     None,
-        labels:           HashMap::new(),
+        dry_run: None,
+        auto_approve: None,
+        labels: HashMap::new(),
     });
     run.goal = goal;
 
     Ok(ManifestSettingsOverrides {
-        run:             Some(run),
-        cli:             cli_layer_for_verbose(args.verbose),
+        run: Some(run),
+        cli: cli_layer_for_verbose(args.verbose),
         input_overrides: parse_input_overrides(&args.inputs.values)?,
     })
 }

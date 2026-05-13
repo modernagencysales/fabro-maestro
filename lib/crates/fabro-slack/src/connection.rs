@@ -8,7 +8,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::client::{SlackApiError, SlackClient, parse_wss_url};
 use crate::dispatch::{DispatchAction, dispatch};
-use crate::payload::SlackAnswerSubmission;
+use crate::payload::{SlackAnswerSubmission, SlackGateDecisionSubmission};
 use crate::socket::{SocketAck, SocketEnvelope};
 use crate::threads::ThreadRegistry;
 
@@ -91,6 +91,7 @@ pub async fn run_event_loop(
     wss_url: &str,
     thread_registry: &ThreadRegistry,
     on_submit: &Arc<dyn Fn(SlackAnswerSubmission) + Send + Sync>,
+    on_gate_decision: &Arc<dyn Fn(SlackGateDecisionSubmission) + Send + Sync>,
 ) -> Result<(), ConnectionError> {
     let (ws_stream, _) = tokio_tungstenite::connect_async(wss_url)
         .await
@@ -139,6 +140,15 @@ pub async fn run_event_loop(
                 );
                 on_submit(submission);
             }
+            DispatchAction::SubmitGateDecision(submission) => {
+                let submission = *submission;
+                debug!(
+                    run_id = submission.run_id.as_str(),
+                    gate_id = submission.gate_id.as_str(),
+                    "Submitting gate decision from Slack"
+                );
+                on_gate_decision(submission);
+            }
             DispatchAction::Connected => {
                 info!("Socket Mode handshake complete");
             }
@@ -162,6 +172,7 @@ pub async fn run(
     app_token: &str,
     thread_registry: &ThreadRegistry,
     on_submit: Arc<dyn Fn(SlackAnswerSubmission) + Send + Sync>,
+    on_gate_decision: Arc<dyn Fn(SlackGateDecisionSubmission) + Send + Sync>,
 ) {
     let mut backoff = std::time::Duration::from_secs(1);
     let max_backoff = std::time::Duration::from_secs(30);
@@ -180,7 +191,7 @@ pub async fn run(
             }
         };
 
-        match run_event_loop(&wss_url, thread_registry, &on_submit).await {
+        match run_event_loop(&wss_url, thread_registry, &on_submit, &on_gate_decision).await {
             Ok(()) => {
                 info!("Event loop ended, reconnecting...");
                 backoff = std::time::Duration::from_secs(1);
@@ -331,6 +342,8 @@ mod tests {
             Arc::new(move |submission| {
                 callback_submissions.lock().unwrap().push(submission);
             });
+        let on_gate_decision: Arc<dyn Fn(SlackGateDecisionSubmission) + Send + Sync> =
+            Arc::new(|_| {});
 
         let server = async move {
             let (stream, _) = listener.accept().await.unwrap();
@@ -371,7 +384,7 @@ mod tests {
         };
 
         let _server_task = tokio::spawn(server);
-        let loop_result = run_event_loop(&url, &registry, &on_submit).await;
+        let loop_result = run_event_loop(&url, &registry, &on_submit, &on_gate_decision).await;
         assert!(loop_result.is_ok());
 
         let submissions = submissions.lock().unwrap();

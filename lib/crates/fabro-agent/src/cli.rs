@@ -215,6 +215,7 @@ fn summarizer_model_id(provider: Provider) -> ModelHandle {
             Provider::Zai => "glm-4.7",
             Provider::Minimax => "minimax-m2.5",
             Provider::Inception => "mercury",
+            Provider::OpenRouter => "anthropic/claude-haiku-4-5",
         }
         .to_string(),
     }
@@ -222,7 +223,7 @@ fn summarizer_model_id(provider: Provider) -> ModelHandle {
 
 fn build_summarizer(provider: Provider, llm_client: Client) -> WebFetchSummarizer {
     WebFetchSummarizer {
-        client:   llm_client,
+        client: llm_client,
         model_id: summarizer_model_id(provider),
     }
 }
@@ -238,6 +239,7 @@ fn build_profile(
         | Provider::Zai
         | Provider::Minimax
         | Provider::Inception
+        | Provider::OpenRouter
         | Provider::OpenAiCompatible => {
             Box::new(OpenAiProfile::with_summarizer(model, summarizer).with_provider(provider))
         }
@@ -543,6 +545,7 @@ pub async fn run_with_args_and_client(
             | Provider::Zai
             | Provider::Minimax
             | Provider::Inception
+            | Provider::OpenRouter
             | Provider::OpenAiCompatible => Arc::new(
                 OpenAiProfile::with_summarizer(&factory_model, child_summarizer)
                     .with_provider(provider),

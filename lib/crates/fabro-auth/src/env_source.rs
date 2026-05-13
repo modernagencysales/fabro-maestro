@@ -58,7 +58,11 @@ impl EnvCredentialSource {
             Provider::Gemini => {
                 cred.base_url = self.lookup(EnvVars::GEMINI_BASE_URL);
             }
-            Provider::Kimi | Provider::Zai | Provider::Minimax | Provider::Inception => {}
+            Provider::Kimi
+            | Provider::Zai
+            | Provider::Minimax
+            | Provider::Inception
+            | Provider::OpenRouter => {}
             // OpenAiCompatible has no api_key_env_vars, so find_map returned None above.
             Provider::OpenAiCompatible => unreachable!(),
         }
@@ -128,11 +132,15 @@ mod tests {
 
     #[tokio::test]
     async fn configured_providers_reads_injected_env() {
-        let source = test_source(&[("ANTHROPIC_API_KEY", "anthropic-key")]);
-
-        assert_eq!(source.configured_providers().await, vec![
-            Provider::Anthropic
+        let source = test_source(&[
+            ("ANTHROPIC_API_KEY", "anthropic-key"),
+            ("OPENROUTER_API_KEY", "openrouter-key"),
         ]);
+
+        assert_eq!(
+            source.configured_providers().await,
+            vec![Provider::Anthropic, Provider::OpenRouter,]
+        );
     }
 
     #[tokio::test]

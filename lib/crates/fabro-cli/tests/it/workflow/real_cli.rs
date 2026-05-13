@@ -25,13 +25,13 @@ async fn run_real_cli_test(provider: Provider, model: &str) {
     let emitter = Arc::new(Emitter::default());
     let result = backend
         .run(CodergenRunRequest {
-            node:         &node,
-            prompt:       "What is 2+2? Reply with just the number.",
-            context:      &context,
-            thread_id:    None,
-            emitter:      &emitter,
-            sandbox:      &env,
-            tool_hooks:   None,
+            node: &node,
+            prompt: "What is 2+2? Reply with just the number.",
+            context: &context,
+            thread_id: None,
+            emitter: &emitter,
+            sandbox: &env,
+            tool_hooks: None,
             cancel_token: tokio_util::sync::CancellationToken::new(),
         })
         .await

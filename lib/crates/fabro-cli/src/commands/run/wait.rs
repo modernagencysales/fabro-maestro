@@ -149,23 +149,23 @@ mod tests {
     fn json_output_succeeded_with_conclusion() {
         let run_id = fixtures::RUN_1;
         let conclusion = Conclusion {
-            timestamp:            chrono::Utc::now(),
-            status:               StageOutcome::Succeeded,
-            duration_ms:          12345,
-            failure_reason:       None,
+            timestamp: chrono::Utc::now(),
+            status: StageOutcome::Succeeded,
+            duration_ms: 12345,
+            failure_reason: None,
             final_git_commit_sha: None,
-            stages:               vec![],
-            billing:              Some(BilledTokenCounts {
-                input_tokens:       0,
-                output_tokens:      0,
-                total_tokens:       0,
-                reasoning_tokens:   0,
-                cache_read_tokens:  0,
+            stages: vec![],
+            billing: Some(BilledTokenCounts {
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: 0,
+                reasoning_tokens: 0,
+                cache_read_tokens: 0,
                 cache_write_tokens: 0,
-                total_usd_micros:   Some(420_000),
+                total_usd_micros: Some(420_000),
             }),
-            total_retries:        0,
-            diff:                 RunDiff::default(),
+            total_retries: 0,
+            diff: RunDiff::default(),
         };
         let json = build_json_output(
             RunStatus::Succeeded {
@@ -206,17 +206,17 @@ mod tests {
     fn json_output_no_cost_when_none() {
         let run_id = fixtures::RUN_4;
         let conclusion = Conclusion {
-            timestamp:            chrono::Utc::now(),
-            status:               StageOutcome::Failed {
+            timestamp: chrono::Utc::now(),
+            status: StageOutcome::Failed {
                 retry_requested: false,
             },
-            duration_ms:          500,
-            failure_reason:       Some("error".into()),
+            duration_ms: 500,
+            failure_reason: Some("error".into()),
             final_git_commit_sha: None,
-            stages:               vec![],
-            billing:              None,
-            total_retries:        0,
-            diff:                 RunDiff::default(),
+            stages: vec![],
+            billing: None,
+            total_retries: 0,
+            diff: RunDiff::default(),
         };
         let json = build_json_output(
             RunStatus::Failed {
@@ -234,23 +234,23 @@ mod tests {
         let styles = no_color_styles();
         let run_id = fixtures::RUN_5;
         let conclusion = Conclusion {
-            timestamp:            chrono::Utc::now(),
-            status:               StageOutcome::Succeeded,
-            duration_ms:          8000,
-            failure_reason:       None,
+            timestamp: chrono::Utc::now(),
+            status: StageOutcome::Succeeded,
+            duration_ms: 8000,
+            failure_reason: None,
             final_git_commit_sha: None,
-            stages:               vec![],
-            billing:              Some(BilledTokenCounts {
-                input_tokens:       0,
-                output_tokens:      0,
-                total_tokens:       0,
-                reasoning_tokens:   0,
-                cache_read_tokens:  0,
+            stages: vec![],
+            billing: Some(BilledTokenCounts {
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: 0,
+                reasoning_tokens: 0,
+                cache_read_tokens: 0,
                 cache_write_tokens: 0,
-                total_usd_micros:   Some(150_000),
+                total_usd_micros: Some(150_000),
             }),
-            total_retries:        0,
-            diff:                 RunDiff::default(),
+            total_retries: 0,
+            diff: RunDiff::default(),
         };
         // Just verify no panic; actual stderr output is hard to capture
         print_human_output(
@@ -292,8 +292,11 @@ mod tests {
             serde_json::from_str::<RunStatus>(&std::fs::read_to_string(&status_path).unwrap())
                 .unwrap();
         assert!(status.is_terminal());
-        assert_eq!(status, RunStatus::Succeeded {
-            reason: SuccessReason::Completed,
-        });
+        assert_eq!(
+            status,
+            RunStatus::Succeeded {
+                reason: SuccessReason::Completed,
+            }
+        );
     }
 }

@@ -11,10 +11,10 @@ describe("getVisibleNavigation", () => {
     expect(names).toContain("Settings");
   });
 
-  test("hides Automations and Insights in production mode", () => {
+  test("shows live Automations while keeping Insights demo-only in production mode", () => {
     const items = getVisibleNavigation(false);
     const names = items.map((i) => i.name);
-    expect(names).not.toContain("Automations");
+    expect(names).toContain("Automations");
     expect(names).not.toContain("Insights");
     expect(names).toContain("Runs");
     expect(names).toContain("Settings");

@@ -396,5 +396,131 @@
     "estimated_output_tps": 1000,
     "aliases": ["mercury"],
     "default": true
+  },
+  {
+    "id": "moonshotai/kimi-k2.6",
+    "provider": "openrouter",
+    "family": "kimi-k2",
+    "display_name": "Kimi K2.6 (OpenRouter)",
+    "limits": { "context_window": 262142, "max_output": 262142 },
+    "training": null,
+    "knowledge_cutoff": null,
+    "features": { "tools": true, "vision": true, "reasoning": true, "effort": true },
+    "costs": {
+      "input_cost_per_mtok": 0.74,
+      "output_cost_per_mtok": 3.5,
+      "cache_input_cost_per_mtok": 0.25
+    },
+    "estimated_output_tps": null,
+    "aliases": ["openrouter-kimi", "openrouter-kimi-k2.6", "or-kimi", "kimi-k2.6-openrouter"],
+    "default": false
+  },
+  {
+    "id": "google/gemini-3.1-flash-lite",
+    "provider": "openrouter",
+    "family": "gemini-3",
+    "display_name": "Gemini 3.1 Flash Lite (OpenRouter)",
+    "limits": { "context_window": 1048576, "max_output": 65536 },
+    "training": null,
+    "knowledge_cutoff": null,
+    "features": { "tools": true, "vision": true, "reasoning": true, "effort": false },
+    "costs": {
+      "input_cost_per_mtok": 0.25,
+      "output_cost_per_mtok": 1.5,
+      "cache_input_cost_per_mtok": 0.025
+    },
+    "estimated_output_tps": null,
+    "aliases": ["openrouter-gemini-flash-lite", "or-gemini-flash-lite", "gemini-flash-lite-openrouter"],
+    "default": false
+  },
+  {
+    "id": "google/gemini-3.1-pro-preview",
+    "provider": "openrouter",
+    "family": "gemini-3",
+    "display_name": "Gemini 3.1 Pro Preview (OpenRouter)",
+    "limits": { "context_window": 1048576, "max_output": 65536 },
+    "training": null,
+    "knowledge_cutoff": null,
+    "features": { "tools": true, "vision": true, "reasoning": true, "effort": false },
+    "costs": {
+      "input_cost_per_mtok": 2.0,
+      "output_cost_per_mtok": 12.0,
+      "cache_input_cost_per_mtok": 0.2
+    },
+    "estimated_output_tps": null,
+    "aliases": ["openrouter-gemini-pro", "openrouter-gemini-3.1-pro", "or-gemini-pro", "gemini-pro-openrouter"],
+    "default": false
+  },
+  {
+    "id": "qwen/qwen3.6-plus",
+    "provider": "openrouter",
+    "family": "qwen3",
+    "display_name": "Qwen3.6 Plus (OpenRouter)",
+    "limits": { "context_window": 1000000, "max_output": 65536 },
+    "training": null,
+    "knowledge_cutoff": null,
+    "features": { "tools": true, "vision": true, "reasoning": true, "effort": false },
+    "costs": {
+      "input_cost_per_mtok": 0.325,
+      "output_cost_per_mtok": 1.95,
+      "cache_input_cost_per_mtok": null
+    },
+    "estimated_output_tps": null,
+    "aliases": ["openrouter-qwen-plus", "openrouter-qwen3.6-plus", "or-qwen-plus", "qwen-plus-openrouter"],
+    "default": false
+  },
+  {
+    "id": "deepseek/deepseek-v4-pro",
+    "provider": "openrouter",
+    "family": "deepseek-v4",
+    "display_name": "DeepSeek V4 Pro (OpenRouter)",
+    "limits": { "context_window": 1048576, "max_output": 384000 },
+    "training": null,
+    "knowledge_cutoff": null,
+    "features": { "tools": true, "vision": false, "reasoning": true, "effort": false },
+    "costs": {
+      "input_cost_per_mtok": 0.435,
+      "output_cost_per_mtok": 0.87,
+      "cache_input_cost_per_mtok": 0.003625
+    },
+    "estimated_output_tps": null,
+    "aliases": ["openrouter-deepseek-v4-pro", "or-deepseek-v4-pro", "deepseek-v4-pro-openrouter"],
+    "default": false
+  },
+  {
+    "id": "deepseek/deepseek-v4-flash",
+    "provider": "openrouter",
+    "family": "deepseek-v4",
+    "display_name": "DeepSeek V4 Flash (OpenRouter)",
+    "limits": { "context_window": 1048576, "max_output": 384000 },
+    "training": null,
+    "knowledge_cutoff": null,
+    "features": { "tools": true, "vision": false, "reasoning": true, "effort": false },
+    "costs": {
+      "input_cost_per_mtok": 0.14,
+      "output_cost_per_mtok": 0.28,
+      "cache_input_cost_per_mtok": 0.0028
+    },
+    "estimated_output_tps": null,
+    "aliases": ["openrouter-deepseek-v4-flash", "or-deepseek-v4-flash", "deepseek-v4-flash-openrouter"],
+    "default": false
+  },
+  {
+    "id": "anthropic/claude-haiku-4-5",
+    "provider": "openrouter",
+    "family": "claude-4",
+    "display_name": "Claude Haiku 4.5 (OpenRouter)",
+    "limits": { "context_window": 200000, "max_output": 8192 },
+    "training": "2025-08-01",
+    "knowledge_cutoff": "May 2025",
+    "features": { "tools": true, "vision": true, "reasoning": false },
+    "costs": {
+      "input_cost_per_mtok": null,
+      "output_cost_per_mtok": null,
+      "cache_input_cost_per_mtok": null
+    },
+    "estimated_output_tps": null,
+    "aliases": ["openrouter-haiku"],
+    "default": true
   }
 ]

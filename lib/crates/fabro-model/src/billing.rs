@@ -120,7 +120,7 @@ pub struct ModelRef {
     pub provider: Provider,
     pub model_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub speed:    Option<Speed>,
+    pub speed: Option<Speed>,
 }
 
 /// Token counts for one LLM call.
@@ -132,12 +132,12 @@ pub struct ModelRef {
 /// `output_tokens` because Anthropic does not expose a separate billed count.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct TokenCounts {
-    pub input_tokens:       i64,
-    pub output_tokens:      i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
     #[serde(default)]
-    pub reasoning_tokens:   i64,
+    pub reasoning_tokens: i64,
     #[serde(default)]
-    pub cache_read_tokens:  i64,
+    pub cache_read_tokens: i64,
     #[serde(default)]
     pub cache_write_tokens: i64,
 }
@@ -162,10 +162,10 @@ impl std::ops::Add for TokenCounts {
 
     fn add(self, rhs: Self) -> Self::Output {
         Self {
-            input_tokens:       self.input_tokens + rhs.input_tokens,
-            output_tokens:      self.output_tokens + rhs.output_tokens,
-            reasoning_tokens:   self.reasoning_tokens + rhs.reasoning_tokens,
-            cache_read_tokens:  self.cache_read_tokens + rhs.cache_read_tokens,
+            input_tokens: self.input_tokens + rhs.input_tokens,
+            output_tokens: self.output_tokens + rhs.output_tokens,
+            reasoning_tokens: self.reasoning_tokens + rhs.reasoning_tokens,
+            cache_read_tokens: self.cache_read_tokens + rhs.cache_read_tokens,
             cache_write_tokens: self.cache_write_tokens + rhs.cache_write_tokens,
         }
     }
@@ -183,30 +183,30 @@ impl std::ops::AddAssign for TokenCounts {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelUsage {
-    pub model:  ModelRef,
+    pub model: ModelRef,
     pub tokens: TokenCounts,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpenAiModelPricing {
-    pub input:        PricePerMTok,
+    pub input: PricePerMTok,
     pub cached_input: Option<PricePerMTok>,
-    pub output:       PricePerMTok,
+    pub output: PricePerMTok,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnthropicModelPricing {
-    pub input:          PricePerMTok,
-    pub cache_read:     Option<PricePerMTok>,
+    pub input: PricePerMTok,
+    pub cache_read: Option<PricePerMTok>,
     pub cache_write_5m: Option<PricePerMTok>,
     pub cache_write_1h: Option<PricePerMTok>,
-    pub output:         PricePerMTok,
+    pub output: PricePerMTok,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GeminiStorageSegment {
     pub cached_tokens: i64,
-    pub ttl_seconds:   i64,
+    pub ttl_seconds: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,11 +216,11 @@ pub struct GeminiStoragePricing {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GeminiModelPricing {
-    pub input:        PricePerMTok,
-    pub output:       PricePerMTok,
+    pub input: PricePerMTok,
+    pub output: PricePerMTok,
     pub cached_input: Option<PricePerMTok>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub storage:      Option<GeminiStoragePricing>,
+    pub storage: Option<GeminiStoragePricing>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,11 +234,12 @@ pub enum ModelPricingPolicy {
     Zai(OpenAiModelPricing),
     Minimax(OpenAiModelPricing),
     Inception(OpenAiModelPricing),
+    OpenRouter(OpenAiModelPricing),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelPricing {
-    pub model:  ModelRef,
+    pub model: ModelRef,
     pub policy: ModelPricingPolicy,
 }
 
@@ -274,6 +275,7 @@ pub enum ModelBillingFacts {
     Zai(OpenAiBillingFacts),
     Minimax(OpenAiBillingFacts),
     Inception(OpenAiBillingFacts),
+    OpenRouter(OpenAiBillingFacts),
 }
 
 impl ModelBillingFacts {
@@ -288,6 +290,7 @@ impl ModelBillingFacts {
             Provider::Zai => Self::Zai(OpenAiBillingFacts::default()),
             Provider::Minimax => Self::Minimax(OpenAiBillingFacts::default()),
             Provider::Inception => Self::Inception(OpenAiBillingFacts::default()),
+            Provider::OpenRouter => Self::OpenRouter(OpenAiBillingFacts::default()),
         }
     }
 }
@@ -300,7 +303,7 @@ pub struct ModelBillingInput {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BilledModelUsage {
-    pub input:            ModelBillingInput,
+    pub input: ModelBillingInput,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_usd_micros: Option<i64>,
 }
@@ -324,17 +327,17 @@ impl BilledModelUsage {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct BilledTokenCounts {
-    pub input_tokens:       i64,
-    pub output_tokens:      i64,
-    pub total_tokens:       i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
     #[serde(default)]
-    pub reasoning_tokens:   i64,
+    pub reasoning_tokens: i64,
     #[serde(default)]
-    pub cache_read_tokens:  i64,
+    pub cache_read_tokens: i64,
     #[serde(default)]
     pub cache_write_tokens: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub total_usd_micros:   Option<i64>,
+    pub total_usd_micros: Option<i64>,
 }
 
 impl BilledTokenCounts {
@@ -353,13 +356,13 @@ impl BilledTokenCounts {
         }
 
         Self {
-            input_tokens:       tokens.input_tokens,
-            output_tokens:      tokens.output_tokens,
-            total_tokens:       tokens.total_tokens(),
-            reasoning_tokens:   tokens.reasoning_tokens,
-            cache_read_tokens:  tokens.cache_read_tokens,
+            input_tokens: tokens.input_tokens,
+            output_tokens: tokens.output_tokens,
+            total_tokens: tokens.total_tokens(),
+            reasoning_tokens: tokens.reasoning_tokens,
+            cache_read_tokens: tokens.cache_read_tokens,
             cache_write_tokens: tokens.cache_write_tokens,
-            total_usd_micros:   has_total.then_some(total_usd_micros),
+            total_usd_micros: has_total.then_some(total_usd_micros),
         }
     }
 
@@ -503,6 +506,11 @@ impl Model {
                 cached_input,
                 output,
             }),
+            Provider::OpenRouter => ModelPricingPolicy::OpenRouter(OpenAiModelPricing {
+                input,
+                cached_input,
+                output,
+            }),
         };
 
         Some(ModelPricing {
@@ -528,7 +536,8 @@ impl ModelPricing {
             | (ModelPricingPolicy::Kimi(pricing), ModelBillingFacts::Kimi(_))
             | (ModelPricingPolicy::Zai(pricing), ModelBillingFacts::Zai(_))
             | (ModelPricingPolicy::Minimax(pricing), ModelBillingFacts::Minimax(_))
-            | (ModelPricingPolicy::Inception(pricing), ModelBillingFacts::Inception(_)) => {
+            | (ModelPricingPolicy::Inception(pricing), ModelBillingFacts::Inception(_))
+            | (ModelPricingPolicy::OpenRouter(pricing), ModelBillingFacts::OpenRouter(_)) => {
                 Some(bill_openai_like(pricing, &input.usage.tokens))
             }
             (ModelPricingPolicy::Anthropic(pricing), ModelBillingFacts::Anthropic(facts)) => {
@@ -630,10 +639,10 @@ mod tests {
         BilledModelUsage {
             input: ModelBillingInput {
                 usage: ModelUsage {
-                    model:  ModelRef {
+                    model: ModelRef {
                         provider: Provider::OpenAi,
                         model_id: "gpt-5.4".to_string(),
-                        speed:    None,
+                        speed: None,
                     },
                     tokens: TokenCounts {
                         input_tokens,
@@ -652,33 +661,36 @@ mod tests {
     #[test]
     fn billed_token_counts_add_counts_accumulates_cost_when_known() {
         let mut counts = BilledTokenCounts {
-            input_tokens:       1,
-            output_tokens:      2,
-            total_tokens:       3,
-            reasoning_tokens:   4,
-            cache_read_tokens:  5,
+            input_tokens: 1,
+            output_tokens: 2,
+            total_tokens: 3,
+            reasoning_tokens: 4,
+            cache_read_tokens: 5,
             cache_write_tokens: 6,
-            total_usd_micros:   None,
+            total_usd_micros: None,
         };
         counts.add_counts(&BilledTokenCounts {
-            input_tokens:       10,
-            output_tokens:      20,
-            total_tokens:       30,
-            reasoning_tokens:   40,
-            cache_read_tokens:  50,
+            input_tokens: 10,
+            output_tokens: 20,
+            total_tokens: 30,
+            reasoning_tokens: 40,
+            cache_read_tokens: 50,
             cache_write_tokens: 60,
-            total_usd_micros:   Some(70),
+            total_usd_micros: Some(70),
         });
 
-        assert_eq!(counts, BilledTokenCounts {
-            input_tokens:       11,
-            output_tokens:      22,
-            total_tokens:       33,
-            reasoning_tokens:   44,
-            cache_read_tokens:  55,
-            cache_write_tokens: 66,
-            total_usd_micros:   Some(70),
-        });
+        assert_eq!(
+            counts,
+            BilledTokenCounts {
+                input_tokens: 11,
+                output_tokens: 22,
+                total_tokens: 33,
+                reasoning_tokens: 44,
+                cache_read_tokens: 55,
+                cache_write_tokens: 66,
+                total_usd_micros: Some(70),
+            }
+        );
     }
 
     #[test]
@@ -687,15 +699,18 @@ mod tests {
 
         counts.add_billed_usage(&billed_usage(10, 20, None));
 
-        assert_eq!(counts, BilledTokenCounts {
-            input_tokens:       10,
-            output_tokens:      20,
-            total_tokens:       45,
-            reasoning_tokens:   3,
-            cache_read_tokens:  5,
-            cache_write_tokens: 7,
-            total_usd_micros:   None,
-        });
+        assert_eq!(
+            counts,
+            BilledTokenCounts {
+                input_tokens: 10,
+                output_tokens: 20,
+                total_tokens: 45,
+                reasoning_tokens: 3,
+                cache_read_tokens: 5,
+                cache_write_tokens: 7,
+                total_usd_micros: None,
+            }
+        );
     }
 
     #[test]
@@ -714,26 +729,29 @@ mod tests {
     #[test]
     fn billed_token_counts_replace_with_billed_usage_discards_previous_values() {
         let mut counts = BilledTokenCounts {
-            input_tokens:       100,
-            output_tokens:      200,
-            total_tokens:       300,
-            reasoning_tokens:   400,
-            cache_read_tokens:  500,
+            input_tokens: 100,
+            output_tokens: 200,
+            total_tokens: 300,
+            reasoning_tokens: 400,
+            cache_read_tokens: 500,
             cache_write_tokens: 600,
-            total_usd_micros:   Some(700),
+            total_usd_micros: Some(700),
         };
 
         counts.replace_with_billed_usage(&billed_usage(1, 2, None));
 
-        assert_eq!(counts, BilledTokenCounts {
-            input_tokens:       1,
-            output_tokens:      2,
-            total_tokens:       18,
-            reasoning_tokens:   3,
-            cache_read_tokens:  5,
-            cache_write_tokens: 7,
-            total_usd_micros:   None,
-        });
+        assert_eq!(
+            counts,
+            BilledTokenCounts {
+                input_tokens: 1,
+                output_tokens: 2,
+                total_tokens: 18,
+                reasoning_tokens: 3,
+                cache_read_tokens: 5,
+                cache_write_tokens: 7,
+                total_usd_micros: None,
+            }
+        );
     }
 
     #[test]
@@ -765,31 +783,31 @@ mod tests {
     #[test]
     fn openai_pricing_bills_cached_input_and_reasoning_output() {
         let pricing = ModelPricing {
-            model:  ModelRef {
+            model: ModelRef {
                 provider: Provider::OpenAi,
                 model_id: "gpt-5.4".to_string(),
-                speed:    None,
+                speed: None,
             },
             policy: ModelPricingPolicy::OpenAi(OpenAiModelPricing {
-                input:        PricePerMTok {
+                input: PricePerMTok {
                     usd_micros: 1_250_000,
                 },
                 cached_input: Some(PricePerMTok {
                     usd_micros: 125_000,
                 }),
-                output:       PricePerMTok {
+                output: PricePerMTok {
                     usd_micros: 10_000_000,
                 },
             }),
         };
         let input = ModelBillingInput {
             usage: ModelUsage {
-                model:  pricing.model.clone(),
+                model: pricing.model.clone(),
                 tokens: TokenCounts {
-                    input_tokens:       500_000,
-                    output_tokens:      125_000,
-                    reasoning_tokens:   25_000,
-                    cache_read_tokens:  250_000,
+                    input_tokens: 500_000,
+                    output_tokens: 125_000,
+                    reasoning_tokens: 25_000,
+                    cache_read_tokens: 250_000,
                     cache_write_tokens: 0,
                 },
             },
@@ -818,16 +836,16 @@ mod tests {
     #[test]
     fn anthropic_billing_supports_distinct_cache_write_buckets() {
         let pricing = ModelPricing {
-            model:  ModelRef {
+            model: ModelRef {
                 provider: Provider::Anthropic,
                 model_id: "claude-opus-4-6".to_string(),
-                speed:    Some(Speed::Fast),
+                speed: Some(Speed::Fast),
             },
             policy: ModelPricingPolicy::Anthropic(AnthropicModelPricing {
-                input:          PricePerMTok {
+                input: PricePerMTok {
                     usd_micros: 30_000_000,
                 },
-                cache_read:     Some(PricePerMTok {
+                cache_read: Some(PricePerMTok {
                     usd_micros: 3_000_000,
                 }),
                 cache_write_5m: Some(PricePerMTok {
@@ -836,19 +854,19 @@ mod tests {
                 cache_write_1h: Some(PricePerMTok {
                     usd_micros: 60_000_000,
                 }),
-                output:         PricePerMTok {
+                output: PricePerMTok {
                     usd_micros: 150_000_000,
                 },
             }),
         };
         let input = ModelBillingInput {
             usage: ModelUsage {
-                model:  pricing.model.clone(),
+                model: pricing.model.clone(),
                 tokens: TokenCounts {
-                    input_tokens:       100_000,
-                    output_tokens:      10_000,
-                    reasoning_tokens:   5_000,
-                    cache_read_tokens:  20_000,
+                    input_tokens: 100_000,
+                    output_tokens: 10_000,
+                    reasoning_tokens: 5_000,
+                    cache_read_tokens: 20_000,
                     cache_write_tokens: 0,
                 },
             },
@@ -864,37 +882,37 @@ mod tests {
     #[test]
     fn gemini_billing_requires_storage_pricing_when_storage_facts_exist() {
         let pricing = ModelPricing {
-            model:  ModelRef {
+            model: ModelRef {
                 provider: Provider::Gemini,
                 model_id: "gemini-3.1-pro-preview".to_string(),
-                speed:    None,
+                speed: None,
             },
             policy: ModelPricingPolicy::Gemini(GeminiModelPricing {
-                input:        PricePerMTok {
+                input: PricePerMTok {
                     usd_micros: 1_250_000,
                 },
-                output:       PricePerMTok {
+                output: PricePerMTok {
                     usd_micros: 10_000_000,
                 },
                 cached_input: None,
-                storage:      None,
+                storage: None,
             }),
         };
         let input = ModelBillingInput {
             usage: ModelUsage {
-                model:  pricing.model.clone(),
+                model: pricing.model.clone(),
                 tokens: TokenCounts {
-                    input_tokens:       100_000,
-                    output_tokens:      10_000,
-                    reasoning_tokens:   0,
-                    cache_read_tokens:  0,
+                    input_tokens: 100_000,
+                    output_tokens: 10_000,
+                    reasoning_tokens: 0,
+                    cache_read_tokens: 0,
                     cache_write_tokens: 0,
                 },
             },
             facts: ModelBillingFacts::Gemini(GeminiBillingFacts {
                 storage_segments: vec![GeminiStorageSegment {
                     cached_tokens: 100_000,
-                    ttl_seconds:   60,
+                    ttl_seconds: 60,
                 }],
             }),
         };

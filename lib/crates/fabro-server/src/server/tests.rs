@@ -20,8 +20,8 @@ use fabro_model::{ModelRef, Provider};
 use fabro_types::settings::ServerAuthMethod;
 use fabro_types::{
     AttrValue, AuthMethod, CommandTermination, FailureCategory, FailureDetail, Graph,
-    InterviewQuestionRecord, Node, Outcome, QuestionType, RunBlobId, RunId, RunSpec,
-    SandboxProvider, SuccessReason, SystemActorKind, WorkflowSettings, fixtures,
+    InterviewOption, InterviewQuestionRecord, Node, Outcome, QuestionType, RunBlobId, RunId,
+    RunSpec, SandboxProvider, SuccessReason, SystemActorKind, WorkflowSettings, fixtures,
 };
 use fabro_util::check_report::CheckStatus;
 use httpmock::Method::{GET, POST};
@@ -94,6 +94,63 @@ fn spa_fixture_root() -> PathBuf {
 fn test_app_with_scheduler(state: Arc<AppState>) -> Router {
     spawn_scheduler(Arc::clone(&state));
     crate::test_support::build_test_router(state)
+}
+
+fn gate_question(options: Vec<(&str, &str)>) -> InterviewQuestionRecord {
+    InterviewQuestionRecord {
+        id: "gate-1".to_string(),
+        text: "Approve Plan".to_string(),
+        stage: "approve".to_string(),
+        question_type: QuestionType::MultipleChoice,
+        options: options
+            .into_iter()
+            .map(|(key, label)| InterviewOption {
+                key: key.to_string(),
+                label: label.to_string(),
+            })
+            .collect(),
+        allow_freeform: false,
+        timeout_seconds: None,
+        context_display: None,
+    }
+}
+
+#[test]
+fn gate_decision_approve_maps_to_approve_option() {
+    let question = gate_question(vec![("A", "[A] Approve"), ("R", "[R] Revise")]);
+    let answer =
+        answer_from_gate_decision(GateDecision::Approve, &serde_json::Value::Null, &question)
+            .unwrap();
+
+    assert_eq!(answer.value, AnswerValue::Selected("A".to_string()));
+}
+
+#[test]
+fn gate_decision_reject_maps_to_revise_option() {
+    let question = gate_question(vec![("A", "[A] Approve"), ("R", "[R] Revise")]);
+    let answer =
+        answer_from_gate_decision(GateDecision::Reject, &serde_json::Value::Null, &question)
+            .unwrap();
+
+    assert_eq!(answer.value, AnswerValue::Selected("R".to_string()));
+}
+
+#[test]
+fn gate_decision_edit_uses_payload_text_for_freeform_gate() {
+    let mut question = gate_question(vec![]);
+    question.question_type = QuestionType::Freeform;
+    question.allow_freeform = true;
+    let answer = answer_from_gate_decision(
+        GateDecision::Edit,
+        &json!({ "text": "Tighten the plan." }),
+        &question,
+    )
+    .unwrap();
+
+    assert_eq!(
+        answer.value,
+        AnswerValue::Text("Tighten the plan.".to_string())
+    );
 }
 
 fn test_app_state_with_isolated_storage() -> Arc<AppState> {
@@ -186,7 +243,7 @@ async fn mock_daytona_current_key<'a>(
 fn openai_api_key_credential(key: &str) -> AuthCredential {
     AuthCredential {
         provider: Provider::OpenAi,
-        details:  AuthDetails::ApiKey {
+        details: AuthDetails::ApiKey {
             key: key.to_string(),
         },
     }
@@ -495,18 +552,18 @@ fn webhook_request(
 
 fn dev_token_auth_mode() -> AuthMode {
     AuthMode::Enabled(ConfiguredAuth {
-        methods:    vec![ServerAuthMethod::DevToken],
-        dev_token:  Some(TEST_DEV_TOKEN.to_string()),
-        jwt_key:    None,
+        methods: vec![ServerAuthMethod::DevToken],
+        dev_token: Some(TEST_DEV_TOKEN.to_string()),
+        jwt_key: None,
         jwt_issuer: None,
     })
 }
 
 fn jwt_auth_mode() -> AuthMode {
     AuthMode::Enabled(ConfiguredAuth {
-        methods:    vec![ServerAuthMethod::Github],
-        dev_token:  None,
-        jwt_key:    Some(
+        methods: vec![ServerAuthMethod::Github],
+        dev_token: None,
+        jwt_key: Some(
             auth::derive_jwt_key(TEST_SESSION_SECRET.as_bytes())
                 .expect("test JWT key should derive"),
         ),
@@ -530,12 +587,12 @@ fn jwt_auth_app() -> (Arc<AppState>, Router) {
 
 fn test_user_subject() -> auth::JwtSubject {
     auth::JwtSubject {
-        identity:    fabro_types::IdpIdentity::new("https://github.com", "12345").unwrap(),
-        login:       "octocat".to_string(),
-        name:        "The Octocat".to_string(),
-        email:       "octocat@example.com".to_string(),
-        avatar_url:  "https://example.com/octocat.png".to_string(),
-        user_url:    "https://github.com/octocat".to_string(),
+        identity: fabro_types::IdpIdentity::new("https://github.com", "12345").unwrap(),
+        login: "octocat".to_string(),
+        name: "The Octocat".to_string(),
+        email: "octocat@example.com".to_string(),
+        avatar_url: "https://example.com/octocat.png".to_string(),
+        user_url: "https://github.com/octocat".to_string(),
         auth_method: AuthMethod::Github,
     }
 }
@@ -935,10 +992,10 @@ async fn create_secret_stores_file_secret_and_excludes_it_from_snapshot() {
 
     let vault = state.vault.read().await;
     assert!(!vault.snapshot().contains_key("/tmp/test.pem"));
-    assert_eq!(vault.file_secrets(), vec![(
-        "/tmp/test.pem".to_string(),
-        "pem-data".to_string()
-    )]);
+    assert_eq!(
+        vault.file_secrets(),
+        vec![("/tmp/test.pem".to_string(), "pem-data".to_string())]
+    );
 }
 
 #[tokio::test]
@@ -1015,21 +1072,21 @@ async fn create_secret_stores_valid_credential_entries() {
     let app = crate::test_support::build_test_router(Arc::clone(&state));
     let credential = fabro_auth::AuthCredential {
         provider: Provider::OpenAi,
-        details:  fabro_auth::AuthDetails::CodexOAuth {
-            tokens:     fabro_auth::OAuthTokens {
-                access_token:  "access".to_string(),
+        details: fabro_auth::AuthDetails::CodexOAuth {
+            tokens: fabro_auth::OAuthTokens {
+                access_token: "access".to_string(),
                 refresh_token: Some("refresh".to_string()),
-                expires_at:    chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z")
+                expires_at: chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z")
                     .unwrap()
                     .with_timezone(&chrono::Utc),
             },
-            config:     fabro_auth::OAuthConfig {
-                auth_url:     "https://auth.openai.com".to_string(),
-                token_url:    "https://auth.openai.com/oauth/token".to_string(),
-                client_id:    "client".to_string(),
-                scopes:       vec!["openid".to_string()],
+            config: fabro_auth::OAuthConfig {
+                auth_url: "https://auth.openai.com".to_string(),
+                token_url: "https://auth.openai.com/oauth/token".to_string(),
+                client_id: "client".to_string(),
+                scopes: vec!["openid".to_string()],
                 redirect_uri: Some("https://auth.openai.com/deviceauth/callback".to_string()),
-                use_pkce:     true,
+                use_pkce: true,
             },
             account_id: Some("acct_123".to_string()),
         },
@@ -1062,11 +1119,10 @@ async fn create_secret_stores_valid_credential_entries() {
 async fn create_secret_rejects_under_scoped_daytona_api_key_and_leaves_vault_unchanged() {
     let server = MockServer::start_async().await;
     let auth = mock_daytona_auth_probe(&server).await;
-    let current_key = mock_daytona_current_key(&server, vec![
-        "delete:snapshots",
-        "delete:sandboxes",
-        "delete:volumes",
-    ])
+    let current_key = mock_daytona_current_key(
+        &server,
+        vec!["delete:snapshots", "delete:sandboxes", "delete:volumes"],
+    )
     .await;
     let base_url = server.base_url();
     let state = test_app_state_with_env_lookup(
@@ -1126,11 +1182,10 @@ async fn create_secret_rejects_under_scoped_daytona_api_key_and_leaves_vault_unc
 async fn diagnostics_reports_under_scoped_daytona_api_key() {
     let server = MockServer::start_async().await;
     let auth = mock_daytona_auth_probe(&server).await;
-    let current_key = mock_daytona_current_key(&server, vec![
-        "delete:snapshots",
-        "delete:sandboxes",
-        "delete:volumes",
-    ])
+    let current_key = mock_daytona_current_key(
+        &server,
+        vec!["delete:snapshots", "delete:sandboxes", "delete:volumes"],
+    )
     .await;
     let base_url = server.base_url();
     let state = test_app_state_with_env_lookup(
@@ -1262,9 +1317,10 @@ async fn llm_source_configured_providers_reads_openai_codex_from_vault() {
         )
         .unwrap();
 
-    assert_eq!(state.llm_source.configured_providers().await, vec![
-        Provider::OpenAi
-    ]);
+    assert_eq!(
+        state.llm_source.configured_providers().await,
+        vec![Provider::OpenAi]
+    );
 }
 
 #[tokio::test]
@@ -1308,19 +1364,19 @@ async fn resolve_llm_client_uses_env_lookup_for_openai_settings() {
     let response = llm_result
         .client
         .complete(&LlmRequest {
-            model:            "gpt-5.4".to_string(),
-            messages:         vec![LlmMessage::user("Hello")],
-            provider:         Some("openai".to_string()),
-            tools:            None,
-            tool_choice:      None,
-            response_format:  None,
-            temperature:      None,
-            top_p:            None,
-            max_tokens:       None,
-            stop_sequences:   None,
+            model: "gpt-5.4".to_string(),
+            messages: vec![LlmMessage::user("Hello")],
+            provider: Some("openai".to_string()),
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+            stop_sequences: None,
             reasoning_effort: None,
-            speed:            None,
-            metadata:         None,
+            speed: None,
+            metadata: None,
             provider_options: None,
         })
         .await
@@ -1954,7 +2010,7 @@ async fn in_process_answer_transport_cancel_run_cancels_pending_interviews() {
     ));
     let steering_hub = Arc::new(fabro_workflow::SteeringHub::new(emitter));
     let transport = RunAnswerTransport::InProcess {
-        interviewer:  Arc::clone(&interviewer),
+        interviewer: Arc::clone(&interviewer),
         steering_hub: Arc::clone(&steering_hub),
     };
     let mut question = Question::new("Approve?", QuestionType::YesNo);
@@ -2276,24 +2332,28 @@ async fn create_durable_run_with_events(
 }
 
 async fn append_default_run_created(run_store: &fabro_store::RunDatabase, run_id: RunId) {
-    workflow_event::append_event(run_store, &run_id, &workflow_event::Event::RunCreated {
-        run_id,
-        title: None,
-        settings: serde_json::to_value(WorkflowSettings::default()).unwrap(),
-        graph: serde_json::to_value(Graph::new("test")).unwrap(),
-        workflow_source: None,
-        workflow_config: None,
-        labels: std::collections::BTreeMap::default(),
-        run_dir: "/tmp".to_string(),
-        source_directory: None,
-        workflow_slug: None,
-        db_prefix: None,
-        provenance: None,
-        manifest_blob: None,
-        git: None,
-        fork_source_ref: None,
-        web_url: None,
-    })
+    workflow_event::append_event(
+        run_store,
+        &run_id,
+        &workflow_event::Event::RunCreated {
+            run_id,
+            title: None,
+            settings: serde_json::to_value(WorkflowSettings::default()).unwrap(),
+            graph: serde_json::to_value(Graph::new("test")).unwrap(),
+            workflow_source: None,
+            workflow_config: None,
+            labels: std::collections::BTreeMap::default(),
+            run_dir: "/tmp".to_string(),
+            source_directory: None,
+            workflow_slug: None,
+            db_prefix: None,
+            provenance: None,
+            manifest_blob: None,
+            git: None,
+            fork_source_ref: None,
+            web_url: None,
+        },
+    )
     .await
     .unwrap();
 }
@@ -2302,19 +2362,21 @@ async fn append_default_run_created(run_store: &fabro_store::RunDatabase, run_id
 async fn persist_cancelled_run_status_ignores_already_terminal_runs() {
     let state = test_app_state();
     let run_id = fixtures::RUN_1;
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::WorkflowRunCompleted {
-            duration_ms:          1000,
-            artifact_count:       0,
-            status:               "succeeded".to_string(),
-            reason:               SuccessReason::Completed,
-            total_usd_micros:     None,
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[workflow_event::Event::WorkflowRunCompleted {
+            duration_ms: 1000,
+            artifact_count: 0,
+            status: "succeeded".to_string(),
+            reason: SuccessReason::Completed,
+            total_usd_micros: None,
             final_git_commit_sha: None,
-            final_patch:          None,
-            diff_summary:         None,
-            billing:              None,
-        },
-    ])
+            final_patch: None,
+            diff_summary: None,
+            billing: None,
+        }],
+    )
     .await;
 
     persist_cancelled_run_status(state.as_ref(), run_id)
@@ -2323,9 +2385,12 @@ async fn persist_cancelled_run_status_ignores_already_terminal_runs() {
 
     let run_store = state.store.open_run(&run_id).await.unwrap();
     let projection = run_store.state().await.unwrap();
-    assert_eq!(projection.status, RunStatus::Succeeded {
-        reason: SuccessReason::Completed,
-    });
+    assert_eq!(
+        projection.status,
+        RunStatus::Succeeded {
+            reason: SuccessReason::Completed,
+        }
+    );
     assert!(!run_store.list_events().await.unwrap().iter().any(|event| {
         matches!(
             event.event.body,
@@ -2338,19 +2403,21 @@ async fn persist_cancelled_run_status_ignores_already_terminal_runs() {
 async fn delete_terminal_managed_run_does_not_send_cancel_signal() {
     let state = test_app_state();
     let run_id = fixtures::RUN_1;
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::WorkflowRunCompleted {
-            duration_ms:          1000,
-            artifact_count:       0,
-            status:               "succeeded".to_string(),
-            reason:               SuccessReason::Completed,
-            total_usd_micros:     None,
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[workflow_event::Event::WorkflowRunCompleted {
+            duration_ms: 1000,
+            artifact_count: 0,
+            status: "succeeded".to_string(),
+            reason: SuccessReason::Completed,
+            total_usd_micros: None,
             final_git_commit_sha: None,
-            final_patch:          None,
-            diff_summary:         None,
-            billing:              None,
-        },
-    ])
+            final_patch: None,
+            diff_summary: None,
+            billing: None,
+        }],
+    )
     .await;
 
     let temp = tempfile::tempdir().unwrap();
@@ -2418,13 +2485,17 @@ async fn list_run_stages_projects_retrying_until_completion() {
     let app = crate::test_support::build_test_router(Arc::clone(&state));
     let run_id = RunId::new();
 
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-    ])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+        ],
+    )
     .await;
     append_scoped_stage_event(
         &state,
@@ -2432,11 +2503,11 @@ async fn list_run_stages_projects_retrying_until_completion() {
         "setup",
         1,
         &workflow_event::Event::StageStarted {
-            node_id:      "setup".to_string(),
-            name:         "Setup".to_string(),
-            index:        0,
+            node_id: "setup".to_string(),
+            name: "Setup".to_string(),
+            index: 0,
             handler_type: "command".to_string(),
-            attempt:      1,
+            attempt: 1,
             max_attempts: 1,
         },
     )
@@ -2476,11 +2547,11 @@ async fn list_run_stages_projects_retrying_until_completion() {
         "work",
         1,
         &workflow_event::Event::StageStarted {
-            node_id:      "work".to_string(),
-            name:         "Work".to_string(),
-            index:        1,
+            node_id: "work".to_string(),
+            name: "Work".to_string(),
+            index: 1,
             handler_type: "command".to_string(),
-            attempt:      1,
+            attempt: 1,
             max_attempts: 3,
         },
     )
@@ -2491,14 +2562,14 @@ async fn list_run_stages_projects_retrying_until_completion() {
         "work",
         1,
         &workflow_event::Event::StageFailed {
-            node_id:     "work".to_string(),
-            name:        "Work".to_string(),
-            index:       1,
-            failure:     FailureDetail::new("try again", FailureCategory::TransientInfra),
-            will_retry:  true,
+            node_id: "work".to_string(),
+            name: "Work".to_string(),
+            index: 1,
+            failure: FailureDetail::new("try again", FailureCategory::TransientInfra),
+            will_retry: true,
             duration_ms: 10,
-            billing:     None,
-            actor:       None,
+            billing: None,
+            actor: None,
         },
     )
     .await;
@@ -2508,12 +2579,12 @@ async fn list_run_stages_projects_retrying_until_completion() {
         "work",
         1,
         &workflow_event::Event::StageRetrying {
-            node_id:      "work".to_string(),
-            name:         "Work".to_string(),
-            index:        1,
-            attempt:      2,
+            node_id: "work".to_string(),
+            name: "Work".to_string(),
+            index: 1,
+            attempt: 2,
             max_attempts: 3,
-            delay_ms:     100,
+            delay_ms: 100,
         },
     )
     .await;
@@ -2624,28 +2695,32 @@ async fn list_run_stages_distinguishes_visits() {
         .insert("type".to_string(), AttrValue::String("command".to_string()));
     graph.nodes.insert("verify".to_string(), verify);
 
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::RunCreated {
-            run_id,
-            title: None,
-            settings: serde_json::to_value(fabro_types::WorkflowSettings::default()).unwrap(),
-            graph: serde_json::to_value(&graph).unwrap(),
-            workflow_source: None,
-            workflow_config: None,
-            labels: std::collections::BTreeMap::default(),
-            run_dir: String::new(),
-            source_directory: None,
-            workflow_slug: Some("test".to_string()),
-            db_prefix: None,
-            provenance: None,
-            manifest_blob: None,
-            git: None,
-            fork_source_ref: None,
-            web_url: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-    ])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[
+            workflow_event::Event::RunCreated {
+                run_id,
+                title: None,
+                settings: serde_json::to_value(fabro_types::WorkflowSettings::default()).unwrap(),
+                graph: serde_json::to_value(&graph).unwrap(),
+                workflow_source: None,
+                workflow_config: None,
+                labels: std::collections::BTreeMap::default(),
+                run_dir: String::new(),
+                source_directory: None,
+                workflow_slug: Some("test".to_string()),
+                db_prefix: None,
+                provenance: None,
+                manifest_blob: None,
+                git: None,
+                fork_source_ref: None,
+                web_url: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+        ],
+    )
     .await;
 
     // First visit of `verify` — failed.
@@ -2655,11 +2730,11 @@ async fn list_run_stages_distinguishes_visits() {
         "verify",
         1,
         &workflow_event::Event::StageStarted {
-            node_id:      "verify".to_string(),
-            name:         "Verify".to_string(),
-            index:        1,
+            node_id: "verify".to_string(),
+            name: "Verify".to_string(),
+            index: 1,
             handler_type: "command".to_string(),
-            attempt:      1,
+            attempt: 1,
             max_attempts: 1,
         },
     )
@@ -2701,11 +2776,11 @@ async fn list_run_stages_distinguishes_visits() {
         "verify",
         2,
         &workflow_event::Event::StageStarted {
-            node_id:      "verify".to_string(),
-            name:         "Verify".to_string(),
-            index:        1,
+            node_id: "verify".to_string(),
+            name: "Verify".to_string(),
+            index: 1,
             handler_type: "command".to_string(),
-            attempt:      1,
+            attempt: 1,
             max_attempts: 1,
         },
     )
@@ -2754,13 +2829,17 @@ async fn run_billing_dedups_retried_nodes_and_sums_their_durations() {
     let app = crate::test_support::build_test_router(Arc::clone(&state));
     let run_id = RunId::new();
 
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-    ])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+        ],
+    )
     .await;
 
     // Visit 1 of `verify` — completed in 1.5s.
@@ -2897,13 +2976,17 @@ async fn run_billing_sums_usage_across_retry_visits_and_uses_latest_model() {
     let failed_usage = test_billed_usage("gpt-old", 100, 10);
     let success_usage = test_billed_usage("gpt-new", 200, 20);
 
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-    ])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+        ],
+    )
     .await;
 
     append_scoped_stage_event(
@@ -2912,14 +2995,14 @@ async fn run_billing_sums_usage_across_retry_visits_and_uses_latest_model() {
         "verify",
         1,
         &workflow_event::Event::StageFailed {
-            node_id:     "verify".to_string(),
-            name:        "Verify".to_string(),
-            index:       1,
-            failure:     FailureDetail::new("try again", FailureCategory::TransientInfra),
-            will_retry:  true,
+            node_id: "verify".to_string(),
+            name: "Verify".to_string(),
+            index: 1,
+            failure: FailureDetail::new("try again", FailureCategory::TransientInfra),
+            will_retry: true,
             duration_ms: 1200,
-            billing:     Some(failed_usage),
-            actor:       None,
+            billing: Some(failed_usage),
+            actor: None,
         },
     )
     .await;
@@ -3032,13 +3115,17 @@ async fn list_run_stages_shows_retrying_after_failed_event() {
     let app = crate::test_support::build_test_router(Arc::clone(&state));
     let run_id = RunId::new();
 
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-    ])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+        ],
+    )
     .await;
 
     append_scoped_stage_event(
@@ -3047,11 +3134,11 @@ async fn list_run_stages_shows_retrying_after_failed_event() {
         "work",
         1,
         &workflow_event::Event::StageStarted {
-            node_id:      "work".to_string(),
-            name:         "Work".to_string(),
-            index:        0,
+            node_id: "work".to_string(),
+            name: "Work".to_string(),
+            index: 0,
             handler_type: "command".to_string(),
-            attempt:      1,
+            attempt: 1,
             max_attempts: 3,
         },
     )
@@ -3062,14 +3149,14 @@ async fn list_run_stages_shows_retrying_after_failed_event() {
         "work",
         1,
         &workflow_event::Event::StageFailed {
-            node_id:     "work".to_string(),
-            name:        "Work".to_string(),
-            index:       0,
-            failure:     FailureDetail::new("flake", FailureCategory::TransientInfra),
-            will_retry:  true,
+            node_id: "work".to_string(),
+            name: "Work".to_string(),
+            index: 0,
+            failure: FailureDetail::new("flake", FailureCategory::TransientInfra),
+            will_retry: true,
             duration_ms: 5,
-            billing:     None,
-            actor:       None,
+            billing: None,
+            actor: None,
         },
     )
     .await;
@@ -3079,12 +3166,12 @@ async fn list_run_stages_shows_retrying_after_failed_event() {
         "work",
         1,
         &workflow_event::Event::StageRetrying {
-            node_id:      "work".to_string(),
-            name:         "Work".to_string(),
-            index:        0,
-            attempt:      2,
+            node_id: "work".to_string(),
+            name: "Work".to_string(),
+            index: 0,
+            attempt: 2,
             max_attempts: 3,
-            delay_ms:     50,
+            delay_ms: 50,
         },
     )
     .await;
@@ -3110,13 +3197,17 @@ async fn list_run_stages_shows_retrying_when_failed_will_retry() {
     let app = crate::test_support::build_test_router(Arc::clone(&state));
     let run_id = RunId::new();
 
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-    ])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+        ],
+    )
     .await;
 
     append_scoped_stage_event(
@@ -3125,11 +3216,11 @@ async fn list_run_stages_shows_retrying_when_failed_will_retry() {
         "work",
         1,
         &workflow_event::Event::StageStarted {
-            node_id:      "work".to_string(),
-            name:         "Work".to_string(),
-            index:        0,
+            node_id: "work".to_string(),
+            name: "Work".to_string(),
+            index: 0,
             handler_type: "command".to_string(),
-            attempt:      1,
+            attempt: 1,
             max_attempts: 3,
         },
     )
@@ -3142,14 +3233,14 @@ async fn list_run_stages_shows_retrying_when_failed_will_retry() {
         "work",
         1,
         &workflow_event::Event::StageFailed {
-            node_id:     "work".to_string(),
-            name:        "Work".to_string(),
-            index:       0,
-            failure:     FailureDetail::new("flake", FailureCategory::TransientInfra),
-            will_retry:  true,
+            node_id: "work".to_string(),
+            name: "Work".to_string(),
+            index: 0,
+            failure: FailureDetail::new("flake", FailureCategory::TransientInfra),
+            will_retry: true,
             duration_ms: 5,
-            billing:     None,
-            actor:       None,
+            billing: None,
+            actor: None,
         },
     )
     .await;
@@ -3175,69 +3266,73 @@ async fn run_billing_retried_node_then_succeeded_emits_one_row_with_final_attemp
     let app = crate::test_support::build_test_router(Arc::clone(&state));
     let run_id = RunId::new();
 
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-        workflow_event::Event::StageStarted {
-            node_id:      "work".to_string(),
-            name:         "Work".to_string(),
-            index:        0,
-            handler_type: "command".to_string(),
-            attempt:      1,
-            max_attempts: 3,
-        },
-        workflow_event::Event::StageFailed {
-            node_id:     "work".to_string(),
-            name:        "Work".to_string(),
-            index:       0,
-            failure:     FailureDetail::new("transient", FailureCategory::TransientInfra),
-            will_retry:  true,
-            duration_ms: 10,
-            billing:     None,
-            actor:       None,
-        },
-        workflow_event::Event::StageRetrying {
-            node_id:      "work".to_string(),
-            name:         "Work".to_string(),
-            index:        0,
-            attempt:      2,
-            max_attempts: 3,
-            delay_ms:     0,
-        },
-        workflow_event::Event::StageStarted {
-            node_id:      "work".to_string(),
-            name:         "Work".to_string(),
-            index:        0,
-            handler_type: "command".to_string(),
-            attempt:      2,
-            max_attempts: 3,
-        },
-        workflow_event::Event::StageCompleted {
-            node_id: "work".to_string(),
-            name: "Work".to_string(),
-            index: 0,
-            duration_ms: 25,
-            status: "succeeded".to_string(),
-            preferred_label: None,
-            suggested_next_ids: Vec::new(),
-            billing: None,
-            failure: None,
-            notes: None,
-            files_touched: Vec::new(),
-            context_updates: None,
-            jump_to_node: None,
-            context_values: None,
-            node_visits: None,
-            loop_failure_signatures: None,
-            restart_failure_signatures: None,
-            response: None,
-            attempt: 2,
-            max_attempts: 3,
-        },
-    ])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+            workflow_event::Event::StageStarted {
+                node_id: "work".to_string(),
+                name: "Work".to_string(),
+                index: 0,
+                handler_type: "command".to_string(),
+                attempt: 1,
+                max_attempts: 3,
+            },
+            workflow_event::Event::StageFailed {
+                node_id: "work".to_string(),
+                name: "Work".to_string(),
+                index: 0,
+                failure: FailureDetail::new("transient", FailureCategory::TransientInfra),
+                will_retry: true,
+                duration_ms: 10,
+                billing: None,
+                actor: None,
+            },
+            workflow_event::Event::StageRetrying {
+                node_id: "work".to_string(),
+                name: "Work".to_string(),
+                index: 0,
+                attempt: 2,
+                max_attempts: 3,
+                delay_ms: 0,
+            },
+            workflow_event::Event::StageStarted {
+                node_id: "work".to_string(),
+                name: "Work".to_string(),
+                index: 0,
+                handler_type: "command".to_string(),
+                attempt: 2,
+                max_attempts: 3,
+            },
+            workflow_event::Event::StageCompleted {
+                node_id: "work".to_string(),
+                name: "Work".to_string(),
+                index: 0,
+                duration_ms: 25,
+                status: "succeeded".to_string(),
+                preferred_label: None,
+                suggested_next_ids: Vec::new(),
+                billing: None,
+                failure: None,
+                notes: None,
+                files_touched: Vec::new(),
+                context_updates: None,
+                jump_to_node: None,
+                context_values: None,
+                node_visits: None,
+                loop_failure_signatures: None,
+                restart_failure_signatures: None,
+                response: None,
+                attempt: 2,
+                max_attempts: 3,
+            },
+        ],
+    )
     .await;
 
     let response = app
@@ -3268,11 +3363,11 @@ async fn run_billing_retried_node_then_succeeded_emits_one_row_with_final_attemp
 
 fn revisit_test_started(node_id: &str) -> workflow_event::Event {
     workflow_event::Event::StageStarted {
-        node_id:      node_id.to_string(),
-        name:         node_id.to_string(),
-        index:        0,
+        node_id: node_id.to_string(),
+        name: node_id.to_string(),
+        index: 0,
         handler_type: "command".to_string(),
-        attempt:      1,
+        attempt: 1,
         max_attempts: 1,
     }
 }
@@ -3314,21 +3409,25 @@ async fn run_billing_revisited_node_collapses_to_two_rows_with_summed_visit_dura
     let app = crate::test_support::build_test_router(Arc::clone(&state));
     let run_id = RunId::new();
 
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-        // A → B → A loop. Per-visit `node_visits` payload steers the reducer
-        // to attribute each StageCompleted to the right visit.
-        revisit_test_started("a"),
-        revisit_test_completed_with_visit("a", 1, 1),
-        revisit_test_started("b"),
-        revisit_test_completed_with_visit("b", 2, 1),
-        revisit_test_started("a"),
-        revisit_test_completed_with_visit("a", 99, 2),
-    ])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+            // A → B → A loop. Per-visit `node_visits` payload steers the reducer
+            // to attribute each StageCompleted to the right visit.
+            revisit_test_started("a"),
+            revisit_test_completed_with_visit("a", 1, 1),
+            revisit_test_started("b"),
+            revisit_test_completed_with_visit("b", 2, 1),
+            revisit_test_started("a"),
+            revisit_test_completed_with_visit("a", 99, 2),
+        ],
+    )
     .await;
 
     let response = app
@@ -3535,8 +3634,10 @@ async fn create_run_with_pull_request_record(
     pr_number: u64,
     title: &str,
 ) {
-    create_durable_run_with_events(state, run_id, &[
-        workflow_event::Event::PullRequestCreated {
+    create_durable_run_with_events(
+        state,
+        run_id,
+        &[workflow_event::Event::PullRequestCreated {
             pr_url: pr_url.to_string(),
             pr_number,
             owner: "acme".to_string(),
@@ -3545,8 +3646,8 @@ async fn create_run_with_pull_request_record(
             head_branch: "feature".to_string(),
             title: title.to_string(),
             draft: false,
-        },
-    ])
+        }],
+    )
     .await;
 }
 
@@ -3565,10 +3666,10 @@ async fn create_completed_run_ready_for_pull_request(
     );
     let git = match (repo_origin_url, base_branch) {
         (Some(origin), Some(branch)) => Some(fabro_types::GitContext {
-            origin_url:   origin.to_string(),
-            branch:       branch.to_string(),
-            sha:          None,
-            dirty:        fabro_types::DirtyStatus::Clean,
+            origin_url: origin.to_string(),
+            branch: branch.to_string(),
+            sha: None,
+            dirty: fabro_types::DirtyStatus::Clean,
             push_outcome: fabro_types::PreRunPushOutcome::NotAttempted,
         }),
         _ => None,
@@ -3588,46 +3689,50 @@ async fn create_completed_run_ready_for_pull_request(
         fork_source_ref: None,
     };
 
-    create_durable_run_with_events(state, run_id, &[
-        workflow_event::Event::RunCreated {
-            run_id,
-            title: None,
-            settings: serde_json::to_value(&run_spec.settings).unwrap(),
-            graph: serde_json::to_value(&run_spec.graph).unwrap(),
-            workflow_source: None,
-            workflow_config: None,
-            labels: run_spec.labels.clone().into_iter().collect(),
-            run_dir: run_spec.source_directory.clone().unwrap_or_default(),
-            source_directory: run_spec.source_directory.clone(),
-            workflow_slug: run_spec.workflow_slug.clone(),
-            db_prefix: None,
-            provenance: run_spec.provenance.clone(),
-            manifest_blob: None,
-            git,
-            fork_source_ref: None,
-            web_url: None,
-        },
-        workflow_event::Event::WorkflowRunStarted {
-            name: "test".to_string(),
-            run_id,
-            base_branch: base_branch.map(str::to_string),
-            base_sha: None,
-            run_branch: run_branch.map(str::to_string),
-            worktree_dir: None,
-            goal: Some("Ship the server-side PR".to_string()),
-        },
-        workflow_event::Event::WorkflowRunCompleted {
-            duration_ms:          1,
-            artifact_count:       0,
-            status:               "succeeded".to_string(),
-            reason:               SuccessReason::Completed,
-            total_usd_micros:     None,
-            final_git_commit_sha: None,
-            final_patch:          Some(final_patch.to_string()),
-            diff_summary:         None,
-            billing:              None,
-        },
-    ])
+    create_durable_run_with_events(
+        state,
+        run_id,
+        &[
+            workflow_event::Event::RunCreated {
+                run_id,
+                title: None,
+                settings: serde_json::to_value(&run_spec.settings).unwrap(),
+                graph: serde_json::to_value(&run_spec.graph).unwrap(),
+                workflow_source: None,
+                workflow_config: None,
+                labels: run_spec.labels.clone().into_iter().collect(),
+                run_dir: run_spec.source_directory.clone().unwrap_or_default(),
+                source_directory: run_spec.source_directory.clone(),
+                workflow_slug: run_spec.workflow_slug.clone(),
+                db_prefix: None,
+                provenance: run_spec.provenance.clone(),
+                manifest_blob: None,
+                git,
+                fork_source_ref: None,
+                web_url: None,
+            },
+            workflow_event::Event::WorkflowRunStarted {
+                name: "test".to_string(),
+                run_id,
+                base_branch: base_branch.map(str::to_string),
+                base_sha: None,
+                run_branch: run_branch.map(str::to_string),
+                worktree_dir: None,
+                goal: Some("Ship the server-side PR".to_string()),
+            },
+            workflow_event::Event::WorkflowRunCompleted {
+                duration_ms: 1,
+                artifact_count: 0,
+                status: "succeeded".to_string(),
+                reason: SuccessReason::Completed,
+                total_usd_micros: None,
+                final_git_commit_sha: None,
+                final_patch: Some(final_patch.to_string()),
+                diff_summary: None,
+                billing: None,
+            },
+        ],
+    )
     .await;
 }
 
@@ -3750,11 +3855,14 @@ async fn list_models_filters_by_query_across_aliases() {
         .iter()
         .map(|model| model["id"].as_str().unwrap().to_string())
         .collect::<Vec<_>>();
-    assert_eq!(model_ids, vec![
-        "gpt-5.2-codex".to_string(),
-        "gpt-5.3-codex".to_string(),
-        "gpt-5.3-codex-spark".to_string()
-    ]);
+    assert_eq!(
+        model_ids,
+        vec![
+            "gpt-5.2-codex".to_string(),
+            "gpt-5.3-codex".to_string(),
+            "gpt-5.3-codex-spark".to_string()
+        ]
+    );
 }
 
 #[tokio::test]
@@ -3862,9 +3970,9 @@ slug = "fabro"
             Some("github-redirect-test-key-0123456789"),
         ),
         AuthMode::Enabled(ConfiguredAuth {
-            methods:    vec![ServerAuthMethod::Github],
-            dev_token:  None,
-            jwt_key:    None,
+            methods: vec![ServerAuthMethod::Github],
+            dev_token: None,
+            jwt_key: None,
             jwt_issuer: None,
         }),
     );
@@ -4207,21 +4315,43 @@ async fn submit_answer_not_found_run() {
 }
 
 #[tokio::test]
+async fn submit_gate_decision_not_found_run() {
+    let app = test_app_with();
+    let missing_run_id = fixtures::RUN_64;
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(api(&format!("/runs/{missing_run_id}/gates/q1/decision")))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(&serde_json::json!({
+                "decision": "approve",
+                "payload": {}
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    assert_status!(response, StatusCode::NOT_FOUND).await;
+}
+
+#[tokio::test]
 async fn submit_pending_interview_answer_rejects_invalid_answer_shape() {
     let state = test_app_state();
     let pending = LoadedPendingInterview {
-        run_id:   fixtures::RUN_1,
-        qid:      "q-1".to_string(),
+        run_id: fixtures::RUN_1,
+        qid: "q-1".to_string(),
         question: InterviewQuestionRecord {
-            id:              "q-1".to_string(),
-            text:            "Approve deploy?".to_string(),
-            stage:           "gate".to_string(),
-            question_type:   QuestionType::MultipleChoice,
-            options:         vec![fabro_types::run_event::InterviewOption {
-                key:   "approve".to_string(),
+            id: "q-1".to_string(),
+            text: "Approve deploy?".to_string(),
+            stage: "gate".to_string(),
+            question_type: QuestionType::MultipleChoice,
+            options: vec![fabro_types::run_event::InterviewOption {
+                key: "approve".to_string(),
                 label: "Approve".to_string(),
             }],
-            allow_freeform:  false,
+            allow_freeform: false,
             timeout_seconds: None,
             context_display: None,
         },
@@ -4244,12 +4374,12 @@ async fn submit_pending_interview_answer_rejects_invalid_answer_shape() {
 #[test]
 fn validate_answer_for_question_accepts_no_for_confirmation() {
     let question = InterviewQuestionRecord {
-        id:              "q-1".to_string(),
-        text:            "Continue?".to_string(),
-        stage:           "gate".to_string(),
-        question_type:   QuestionType::Confirmation,
-        options:         vec![],
-        allow_freeform:  false,
+        id: "q-1".to_string(),
+        text: "Continue?".to_string(),
+        stage: "gate".to_string(),
+        question_type: QuestionType::Confirmation,
+        options: vec![],
+        allow_freeform: false,
         timeout_seconds: None,
         context_display: None,
     };
@@ -4262,12 +4392,12 @@ fn validate_answer_for_question_accepts_no_for_confirmation() {
 #[test]
 fn answer_from_typed_yes_request_maps_to_yes_answer() {
     let question = InterviewQuestionRecord {
-        id:              "q-1".to_string(),
-        text:            "Continue?".to_string(),
-        stage:           "gate".to_string(),
-        question_type:   QuestionType::YesNo,
-        options:         vec![],
-        allow_freeform:  false,
+        id: "q-1".to_string(),
+        text: "Continue?".to_string(),
+        stage: "gate".to_string(),
+        question_type: QuestionType::YesNo,
+        options: vec![],
+        allow_freeform: false,
         timeout_seconds: None,
         context_display: None,
     };
@@ -4281,12 +4411,12 @@ fn answer_from_typed_yes_request_maps_to_yes_answer() {
 #[test]
 fn answer_from_typed_no_request_maps_to_no_answer() {
     let question = InterviewQuestionRecord {
-        id:              "q-1".to_string(),
-        text:            "Continue?".to_string(),
-        stage:           "gate".to_string(),
-        question_type:   QuestionType::YesNo,
-        options:         vec![],
-        allow_freeform:  false,
+        id: "q-1".to_string(),
+        text: "Continue?".to_string(),
+        stage: "gate".to_string(),
+        question_type: QuestionType::YesNo,
+        options: vec![],
+        allow_freeform: false,
         timeout_seconds: None,
         context_display: None,
     };
@@ -4300,15 +4430,15 @@ fn answer_from_typed_no_request_maps_to_no_answer() {
 #[test]
 fn answer_from_typed_selected_request_validates_and_attaches_option() {
     let question = InterviewQuestionRecord {
-        id:              "q-1".to_string(),
-        text:            "Choose one.".to_string(),
-        stage:           "gate".to_string(),
-        question_type:   QuestionType::MultipleChoice,
-        options:         vec![fabro_types::run_event::InterviewOption {
-            key:   "approve".to_string(),
+        id: "q-1".to_string(),
+        text: "Choose one.".to_string(),
+        stage: "gate".to_string(),
+        question_type: QuestionType::MultipleChoice,
+        options: vec![fabro_types::run_event::InterviewOption {
+            key: "approve".to_string(),
             label: "Approve".to_string(),
         }],
-        allow_freeform:  false,
+        allow_freeform: false,
         timeout_seconds: None,
         context_display: None,
     };
@@ -4330,21 +4460,21 @@ fn answer_from_typed_selected_request_validates_and_attaches_option() {
 #[test]
 fn answer_from_typed_multi_selected_request_validates_option_keys() {
     let question = InterviewQuestionRecord {
-        id:              "q-1".to_string(),
-        text:            "Choose many.".to_string(),
-        stage:           "gate".to_string(),
-        question_type:   QuestionType::MultiSelect,
-        options:         vec![
+        id: "q-1".to_string(),
+        text: "Choose many.".to_string(),
+        stage: "gate".to_string(),
+        question_type: QuestionType::MultiSelect,
+        options: vec![
             fabro_types::run_event::InterviewOption {
-                key:   "approve".to_string(),
+                key: "approve".to_string(),
                 label: "Approve".to_string(),
             },
             fabro_types::run_event::InterviewOption {
-                key:   "notify".to_string(),
+                key: "notify".to_string(),
                 label: "Notify".to_string(),
             },
         ],
-        allow_freeform:  false,
+        allow_freeform: false,
         timeout_seconds: None,
         context_display: None,
     };
@@ -4409,9 +4539,13 @@ async fn get_run_logs_returns_per_run_log_file() {
     let state = test_app_state_with_isolated_storage();
     let app = crate::test_support::build_test_router(Arc::clone(&state));
     let run_id = RunId::new();
-    create_durable_run_with_events(&state, run_id, &[workflow_event::Event::RunSubmitted {
-        definition_blob: None,
-    }])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[workflow_event::Event::RunSubmitted {
+            definition_blob: None,
+        }],
+    )
     .await;
     let log_path = Storage::new(state.server_storage_dir())
         .run_scratch(&run_id)
@@ -4463,9 +4597,13 @@ async fn get_run_logs_returns_not_found_when_log_file_is_missing() {
     let state = test_app_state_with_isolated_storage();
     let app = crate::test_support::build_test_router(Arc::clone(&state));
     let run_id = RunId::new();
-    create_durable_run_with_events(&state, run_id, &[workflow_event::Event::RunSubmitted {
-        definition_blob: None,
-    }])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[workflow_event::Event::RunSubmitted {
+            definition_blob: None,
+        }],
+    )
     .await;
 
     let req = Request::builder()
@@ -4484,26 +4622,30 @@ async fn get_run_stage_command_log_returns_scratch_slice() {
     let app = crate::test_support::build_test_router(Arc::clone(&state));
     let run_id = RunId::new();
     let stage_id = StageId::new("script_node", 1);
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::StageStarted {
-            node_id:      "script_node".to_string(),
-            name:         "Script".to_string(),
-            index:        1,
-            handler_type: "command".to_string(),
-            attempt:      1,
-            max_attempts: 1,
-        },
-        workflow_event::Event::CommandStarted {
-            node_id:    "script_node".to_string(),
-            script:     "echo hello world".to_string(),
-            command:    "echo hello world".to_string(),
-            language:   "shell".to_string(),
-            timeout_ms: None,
-        },
-    ])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::StageStarted {
+                node_id: "script_node".to_string(),
+                name: "Script".to_string(),
+                index: 1,
+                handler_type: "command".to_string(),
+                attempt: 1,
+                max_attempts: 1,
+            },
+            workflow_event::Event::CommandStarted {
+                node_id: "script_node".to_string(),
+                script: "echo hello world".to_string(),
+                command: "echo hello world".to_string(),
+                language: "shell".to_string(),
+                timeout_ms: None,
+            },
+        ],
+    )
     .await;
     let run_dir = Storage::new(state.server_storage_dir())
         .run_scratch(&run_id)
@@ -4556,20 +4698,20 @@ async fn get_run_stage_command_log_returns_cas_slice() {
             definition_blob: None,
         },
         workflow_event::Event::StageStarted {
-            node_id:      "script_node".to_string(),
-            name:         "Script".to_string(),
-            index:        1,
+            node_id: "script_node".to_string(),
+            name: "Script".to_string(),
+            index: 1,
             handler_type: "command".to_string(),
-            attempt:      1,
+            attempt: 1,
             max_attempts: 1,
         },
         workflow_event::Event::CommandCompleted {
-            node_id:        "script_node".to_string(),
-            output:         output_ref.clone(),
-            exit_code:      Some(0),
-            duration_ms:    5,
-            termination:    CommandTermination::Exited,
-            output_bytes:   11,
+            node_id: "script_node".to_string(),
+            output: output_ref.clone(),
+            exit_code: Some(0),
+            duration_ms: 5,
+            termination: CommandTermination::Exited,
+            output_bytes: 11,
             live_streaming: false,
         },
     ] {
@@ -4620,20 +4762,20 @@ async fn get_run_stage_command_log_prefers_scratch_when_cas_ref_exists() {
             definition_blob: None,
         },
         workflow_event::Event::StageStarted {
-            node_id:      "script_node".to_string(),
-            name:         "Script".to_string(),
-            index:        1,
+            node_id: "script_node".to_string(),
+            name: "Script".to_string(),
+            index: 1,
             handler_type: "command".to_string(),
-            attempt:      1,
+            attempt: 1,
             max_attempts: 1,
         },
         workflow_event::Event::CommandCompleted {
-            node_id:        "script_node".to_string(),
-            output:         output_ref.clone(),
-            exit_code:      Some(0),
-            duration_ms:    5,
-            termination:    CommandTermination::Exited,
-            output_bytes:   7,
+            node_id: "script_node".to_string(),
+            output: output_ref.clone(),
+            exit_code: Some(0),
+            duration_ms: 5,
+            termination: CommandTermination::Exited,
+            output_bytes: 7,
             live_streaming: false,
         },
     ] {
@@ -4681,9 +4823,13 @@ async fn get_run_stage_command_log_returns_not_found_for_missing_stage() {
     let state = test_app_state_with_isolated_storage();
     let app = crate::test_support::build_test_router(Arc::clone(&state));
     let run_id = RunId::new();
-    create_durable_run_with_events(&state, run_id, &[workflow_event::Event::RunSubmitted {
-        definition_blob: None,
-    }])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[workflow_event::Event::RunSubmitted {
+            definition_blob: None,
+        }],
+    )
     .await;
 
     let req = Request::builder()
@@ -5396,13 +5542,17 @@ async fn get_run_state_exposes_pending_interviews() {
     let app = crate::test_support::build_test_router(Arc::clone(&state));
     let run_id = fixtures::RUN_1;
 
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-    ])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+        ],
+    )
     .await;
     append_raw_run_event(
         &state,
@@ -5466,11 +5616,11 @@ async fn cache_backed_run_endpoints_reflect_events_appended_after_warmup() {
         "review",
         1,
         &workflow_event::Event::StageStarted {
-            node_id:      "review".to_string(),
-            name:         "Review".to_string(),
-            index:        0,
+            node_id: "review".to_string(),
+            name: "Review".to_string(),
+            index: 0,
             handler_type: "human".to_string(),
-            attempt:      1,
+            attempt: 1,
             max_attempts: 1,
         },
     )
@@ -5680,9 +5830,9 @@ async fn dev_token_web_login_authorizes_cookie_backed_api_requests() {
     let app = build_router(
         Arc::clone(&state),
         AuthMode::Enabled(ConfiguredAuth {
-            methods:    vec![ServerAuthMethod::DevToken],
-            dev_token:  Some(DEV_TOKEN.to_string()),
-            jwt_key:    Some(
+            methods: vec![ServerAuthMethod::DevToken],
+            dev_token: Some(DEV_TOKEN.to_string()),
+            jwt_key: Some(
                 auth::derive_jwt_key(b"server-test-session-key-0123456789")
                     .expect("test JWT key should derive"),
             ),
@@ -6312,10 +6462,10 @@ async fn worker_token_controls_command_log_route() {
         &run_store,
         &run_id,
         &workflow_event::Event::CommandStarted {
-            node_id:    "code".to_string(),
-            script:     "echo hello".to_string(),
-            command:    "echo hello".to_string(),
-            language:   "shell".to_string(),
+            node_id: "code".to_string(),
+            script: "echo hello".to_string(),
+            command: "echo hello".to_string(),
+            language: "shell".to_string(),
             timeout_ms: None,
         },
     )
@@ -6494,10 +6644,14 @@ async fn stage_artifacts_multipart_round_trip() {
             "content-type",
             format!("multipart/form-data; boundary={boundary}"),
         )
-        .body(multipart_body(boundary, &manifest, &[
-            ("file1", "src/lib.rs", source_bytes),
-            ("file2", "logs/output.txt", log_bytes),
-        ]))
+        .body(multipart_body(
+            boundary,
+            &manifest,
+            &[
+                ("file1", "src/lib.rs", source_bytes),
+                ("file2", "logs/output.txt", log_bytes),
+            ],
+        ))
         .unwrap();
     let response = app.clone().oneshot(req).await.unwrap();
     assert_status!(response, StatusCode::NO_CONTENT).await;
@@ -6736,15 +6890,15 @@ async fn patch_run_title_updates_active_and_archived_runs() {
         &run_store,
         &run_id,
         &workflow_event::Event::WorkflowRunCompleted {
-            duration_ms:          1,
-            artifact_count:       0,
-            status:               "succeeded".to_string(),
-            reason:               SuccessReason::Completed,
-            total_usd_micros:     None,
+            duration_ms: 1,
+            artifact_count: 0,
+            status: "succeeded".to_string(),
+            reason: SuccessReason::Completed,
+            total_usd_micros: None,
             final_git_commit_sha: None,
-            final_patch:          None,
-            diff_summary:         None,
-            billing:              None,
+            final_patch: None,
+            diff_summary: None,
+            billing: None,
         },
     )
     .await
@@ -6882,19 +7036,21 @@ async fn cancel_terminal_durable_run_returns_conflict() {
     let state = test_app_state();
     let app = crate::test_support::build_test_router(Arc::clone(&state));
     let run_id = fixtures::RUN_1;
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::WorkflowRunCompleted {
-            duration_ms:          1000,
-            artifact_count:       0,
-            status:               "succeeded".to_string(),
-            reason:               SuccessReason::Completed,
-            total_usd_micros:     None,
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[workflow_event::Event::WorkflowRunCompleted {
+            duration_ms: 1000,
+            artifact_count: 0,
+            status: "succeeded".to_string(),
+            reason: SuccessReason::Completed,
+            total_usd_micros: None,
             final_git_commit_sha: None,
-            final_patch:          None,
-            diff_summary:         None,
-            billing:              None,
-        },
-    ])
+            final_patch: None,
+            diff_summary: None,
+            billing: None,
+        }],
+    )
     .await;
 
     let req = Request::builder()
@@ -6932,19 +7088,21 @@ async fn steer_terminal_durable_run_returns_run_not_steerable() {
     let state = test_app_state();
     let app = crate::test_support::build_test_router(Arc::clone(&state));
     let run_id = fixtures::RUN_1;
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::WorkflowRunCompleted {
-            duration_ms:          1000,
-            artifact_count:       0,
-            status:               "succeeded".to_string(),
-            reason:               SuccessReason::Completed,
-            total_usd_micros:     None,
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[workflow_event::Event::WorkflowRunCompleted {
+            duration_ms: 1000,
+            artifact_count: 0,
+            status: "succeeded".to_string(),
+            reason: SuccessReason::Completed,
+            total_usd_micros: None,
             final_git_commit_sha: None,
-            final_patch:          None,
-            diff_summary:         None,
-            billing:              None,
-        },
-    ])
+            final_patch: None,
+            diff_summary: None,
+            billing: None,
+        }],
+    )
     .await;
 
     let req = Request::builder()
@@ -7190,36 +7348,42 @@ fn active_api_stage_projection_ignores_stale_deactivation() {
     }
 
     let stage_id = StageId::new("agent", 1);
-    let activated_a =
-        workflow_event::to_run_event(&run_id, &workflow_event::Event::AgentSessionActivated {
-            node_id:      "agent".to_string(),
-            visit:        1,
-            session_id:   "session-a".to_string(),
-            thread_id:    None,
-            provider:     Some("openai".to_string()),
-            model:        Some("gpt-5.4".to_string()),
+    let activated_a = workflow_event::to_run_event(
+        &run_id,
+        &workflow_event::Event::AgentSessionActivated {
+            node_id: "agent".to_string(),
+            visit: 1,
+            session_id: "session-a".to_string(),
+            thread_id: None,
+            provider: Some("openai".to_string()),
+            model: Some("gpt-5.4".to_string()),
             capabilities: vec![SessionCapability::Steer],
-        });
+        },
+    );
     update_live_run_from_event(&state, run_id, &activated_a);
 
-    let deactivated_a =
-        workflow_event::to_run_event(&run_id, &workflow_event::Event::AgentSessionDeactivated {
-            node_id:    "agent".to_string(),
-            visit:      1,
+    let deactivated_a = workflow_event::to_run_event(
+        &run_id,
+        &workflow_event::Event::AgentSessionDeactivated {
+            node_id: "agent".to_string(),
+            visit: 1,
             session_id: "session-a".to_string(),
-        });
+        },
+    );
     update_live_run_from_event(&state, run_id, &deactivated_a);
 
-    let activated_b =
-        workflow_event::to_run_event(&run_id, &workflow_event::Event::AgentSessionActivated {
-            node_id:      "agent".to_string(),
-            visit:        1,
-            session_id:   "session-b".to_string(),
-            thread_id:    None,
-            provider:     Some("openai".to_string()),
-            model:        Some("gpt-5.4".to_string()),
+    let activated_b = workflow_event::to_run_event(
+        &run_id,
+        &workflow_event::Event::AgentSessionActivated {
+            node_id: "agent".to_string(),
+            visit: 1,
+            session_id: "session-b".to_string(),
+            thread_id: None,
+            provider: Some("openai".to_string()),
+            model: Some("gpt-5.4".to_string()),
             capabilities: vec![SessionCapability::Steer],
-        });
+        },
+    );
     update_live_run_from_event(&state, run_id, &activated_b);
     update_live_run_from_event(&state, run_id, &deactivated_a);
 
@@ -7237,9 +7401,9 @@ fn acp_event_for_stage(run_id: &RunId, event: &workflow_event::Event) -> fabro_t
         event,
         Utc::now(),
         Some(&workflow_event::StageScope {
-            node_id:            "agent".to_string(),
-            visit:              1,
-            parallel_group_id:  None,
+            node_id: "agent".to_string(),
+            visit: 1,
+            parallel_group_id: None,
             parallel_branch_id: None,
         }),
     )
@@ -7257,14 +7421,17 @@ async fn steer_with_active_acp_stage_returns_non_steerable_conflict() {
         Some(RunAnswerTransport::Subprocess { control_tx }),
     );
 
-    let started = acp_event_for_stage(&run_id, &workflow_event::Event::AgentAcpStarted {
-        node_id:  "agent".to_string(),
-        visit:    1,
-        mode:     "acp".to_string(),
-        provider: "openai".to_string(),
-        model:    "fake-acp".to_string(),
-        command:  "python fake_agent.py".to_string(),
-    });
+    let started = acp_event_for_stage(
+        &run_id,
+        &workflow_event::Event::AgentAcpStarted {
+            node_id: "agent".to_string(),
+            visit: 1,
+            mode: "acp".to_string(),
+            provider: "openai".to_string(),
+            model: "fake-acp".to_string(),
+            command: "python fake_agent.py".to_string(),
+        },
+    );
     update_live_run_from_event(&state, run_id, &started);
 
     let req = Request::builder()
@@ -7284,22 +7451,22 @@ async fn steer_with_active_acp_stage_returns_non_steerable_conflict() {
 async fn active_acp_stage_marker_clears_on_terminal_paths() {
     let terminal_events: Vec<workflow_event::Event> = vec![
         workflow_event::Event::AgentAcpCompleted {
-            node_id:     "agent".to_string(),
-            stdout:      "done".to_string(),
-            stderr:      String::new(),
+            node_id: "agent".to_string(),
+            stdout: "done".to_string(),
+            stderr: String::new(),
             stop_reason: "end_turn".to_string(),
             duration_ms: 42,
         },
         workflow_event::Event::AgentAcpCancelled {
-            node_id:     "agent".to_string(),
-            stdout:      "partial".to_string(),
-            stderr:      "cancelled".to_string(),
+            node_id: "agent".to_string(),
+            stdout: "partial".to_string(),
+            stderr: "cancelled".to_string(),
             duration_ms: 7,
         },
         workflow_event::Event::AgentAcpTimedOut {
-            node_id:     "agent".to_string(),
-            stdout:      "partial".to_string(),
-            stderr:      "timeout".to_string(),
+            node_id: "agent".to_string(),
+            stdout: "partial".to_string(),
+            stderr: "timeout".to_string(),
             duration_ms: 99,
         },
         workflow_event::Event::StageCompleted {
@@ -7325,14 +7492,14 @@ async fn active_acp_stage_marker_clears_on_terminal_paths() {
             max_attempts: 1,
         },
         workflow_event::Event::StageFailed {
-            node_id:     "agent".to_string(),
-            name:        "agent".to_string(),
-            index:       0,
-            failure:     FailureDetail::new("failed", FailureCategory::Deterministic),
-            will_retry:  false,
+            node_id: "agent".to_string(),
+            name: "agent".to_string(),
+            index: 0,
+            failure: FailureDetail::new("failed", FailureCategory::Deterministic),
+            will_retry: false,
             duration_ms: 1,
-            billing:     None,
-            actor:       None,
+            billing: None,
+            actor: None,
         },
     ];
 
@@ -7346,14 +7513,17 @@ async fn active_acp_stage_marker_clears_on_terminal_paths() {
             run_id,
             Some(RunAnswerTransport::Subprocess { control_tx }),
         );
-        let started = acp_event_for_stage(&run_id, &workflow_event::Event::AgentAcpStarted {
-            node_id:  "agent".to_string(),
-            visit:    1,
-            mode:     "acp".to_string(),
-            provider: "openai".to_string(),
-            model:    "fake-acp".to_string(),
-            command:  "python fake_agent.py".to_string(),
-        });
+        let started = acp_event_for_stage(
+            &run_id,
+            &workflow_event::Event::AgentAcpStarted {
+                node_id: "agent".to_string(),
+                visit: 1,
+                mode: "acp".to_string(),
+                provider: "openai".to_string(),
+                model: "fake-acp".to_string(),
+                command: "python fake_agent.py".to_string(),
+            },
+        );
         update_live_run_from_event(&state, run_id, &started);
         let terminal = acp_event_for_stage(&run_id, &terminal_event);
         update_live_run_from_event(&state, run_id, &terminal);
@@ -7679,24 +7849,28 @@ async fn archive_and_unarchive_updates_listing_visibility() {
     let app = crate::test_support::build_test_router(Arc::clone(&state));
     let run_id = fixtures::RUN_1;
 
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-        workflow_event::Event::WorkflowRunCompleted {
-            duration_ms:          1000,
-            artifact_count:       0,
-            status:               "succeeded".to_string(),
-            reason:               SuccessReason::Completed,
-            total_usd_micros:     None,
-            final_git_commit_sha: None,
-            final_patch:          None,
-            diff_summary:         None,
-            billing:              None,
-        },
-    ])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+            workflow_event::Event::WorkflowRunCompleted {
+                duration_ms: 1000,
+                artifact_count: 0,
+                status: "succeeded".to_string(),
+                reason: SuccessReason::Completed,
+                total_usd_micros: None,
+                final_git_commit_sha: None,
+                final_patch: None,
+                diff_summary: None,
+                billing: None,
+            },
+        ],
+    )
     .await;
 
     let archive_response = app
@@ -7915,37 +8089,41 @@ async fn delete_run_with_preserved_sandbox_returns_handoff() {
     settings.run.sandbox.preserve = true;
     let graph = Graph::new("test");
 
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::RunCreated {
-            run_id,
-            title: None,
-            settings: serde_json::to_value(settings).unwrap(),
-            graph: serde_json::to_value(graph).unwrap(),
-            workflow_source: None,
-            workflow_config: None,
-            labels: std::collections::BTreeMap::default(),
-            run_dir: "/tmp/fabro-run".to_string(),
-            source_directory: Some("/tmp/fabro-run".to_string()),
-            workflow_slug: Some("test".to_string()),
-            db_prefix: None,
-            provenance: None,
-            manifest_blob: None,
-            git: None,
-            fork_source_ref: None,
-            web_url: None,
-        },
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::SandboxInitialized {
-            provider:          SandboxProvider::Local,
-            id:                "sandbox-preserve-1".to_string(),
-            working_directory: "/tmp/fabro-preserved-sandbox".to_string(),
-            repo_cloned:       None,
-            clone_origin_url:  None,
-            clone_branch:      None,
-        },
-    ])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[
+            workflow_event::Event::RunCreated {
+                run_id,
+                title: None,
+                settings: serde_json::to_value(settings).unwrap(),
+                graph: serde_json::to_value(graph).unwrap(),
+                workflow_source: None,
+                workflow_config: None,
+                labels: std::collections::BTreeMap::default(),
+                run_dir: "/tmp/fabro-run".to_string(),
+                source_directory: Some("/tmp/fabro-run".to_string()),
+                workflow_slug: Some("test".to_string()),
+                db_prefix: None,
+                provenance: None,
+                manifest_blob: None,
+                git: None,
+                fork_source_ref: None,
+                web_url: None,
+            },
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::SandboxInitialized {
+                provider: SandboxProvider::Local,
+                id: "sandbox-preserve-1".to_string(),
+                working_directory: "/tmp/fabro-preserved-sandbox".to_string(),
+                repo_cloned: None,
+                clone_origin_url: None,
+                clone_branch: None,
+            },
+        ],
+    )
     .await;
 
     let req = Request::builder()
@@ -7977,50 +8155,54 @@ async fn delete_run_retry_after_missing_provider_resource_removes_metadata() {
     let run_id = RunId::new();
     let graph = Graph::new("test");
 
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::RunCreated {
-            run_id,
-            title: None,
-            settings: serde_json::to_value(fabro_types::WorkflowSettings::default()).unwrap(),
-            graph: serde_json::to_value(graph).unwrap(),
-            workflow_source: None,
-            workflow_config: None,
-            labels: std::collections::BTreeMap::default(),
-            run_dir: "/tmp/fabro-run".to_string(),
-            source_directory: Some("/tmp/fabro-run".to_string()),
-            workflow_slug: Some("test".to_string()),
-            db_prefix: None,
-            provenance: None,
-            manifest_blob: None,
-            git: None,
-            fork_source_ref: None,
-            web_url: None,
-        },
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-        workflow_event::Event::SandboxInitialized {
-            provider:          SandboxProvider::Docker,
-            id:                "missing-sandbox".to_string(),
-            working_directory: "/tmp/fabro-missing-sandbox".to_string(),
-            repo_cloned:       Some(false),
-            clone_origin_url:  None,
-            clone_branch:      None,
-        },
-        workflow_event::Event::WorkflowRunCompleted {
-            duration_ms:          1,
-            artifact_count:       0,
-            status:               "succeeded".to_string(),
-            reason:               SuccessReason::Completed,
-            total_usd_micros:     None,
-            final_git_commit_sha: None,
-            final_patch:          None,
-            diff_summary:         None,
-            billing:              None,
-        },
-    ])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[
+            workflow_event::Event::RunCreated {
+                run_id,
+                title: None,
+                settings: serde_json::to_value(fabro_types::WorkflowSettings::default()).unwrap(),
+                graph: serde_json::to_value(graph).unwrap(),
+                workflow_source: None,
+                workflow_config: None,
+                labels: std::collections::BTreeMap::default(),
+                run_dir: "/tmp/fabro-run".to_string(),
+                source_directory: Some("/tmp/fabro-run".to_string()),
+                workflow_slug: Some("test".to_string()),
+                db_prefix: None,
+                provenance: None,
+                manifest_blob: None,
+                git: None,
+                fork_source_ref: None,
+                web_url: None,
+            },
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+            workflow_event::Event::SandboxInitialized {
+                provider: SandboxProvider::Docker,
+                id: "missing-sandbox".to_string(),
+                working_directory: "/tmp/fabro-missing-sandbox".to_string(),
+                repo_cloned: Some(false),
+                clone_origin_url: None,
+                clone_branch: None,
+            },
+            workflow_event::Event::WorkflowRunCompleted {
+                duration_ms: 1,
+                artifact_count: 0,
+                status: "succeeded".to_string(),
+                reason: SuccessReason::Completed,
+                total_usd_micros: None,
+                final_git_commit_sha: None,
+                final_patch: None,
+                diff_summary: None,
+                billing: None,
+            },
+        ],
+    )
     .await;
 
     let req = Request::builder()
@@ -8147,53 +8329,53 @@ async fn get_aggregate_billing_returns_zeros_initially() {
 fn aggregate_billing_counts_projection_rollup_usage_visits() {
     let mut accumulator = BillingAccumulator::default();
     let rollup = fabro_workflow::ProjectionBillingRollup {
-        stages:             Vec::new(),
-        totals:             BilledTokenCounts {
-            input_tokens:       300,
-            output_tokens:      30,
-            total_tokens:       330,
-            reasoning_tokens:   0,
-            cache_read_tokens:  0,
+        stages: Vec::new(),
+        totals: BilledTokenCounts {
+            input_tokens: 300,
+            output_tokens: 30,
+            total_tokens: 330,
+            reasoning_tokens: 0,
+            cache_read_tokens: 0,
             cache_write_tokens: 0,
-            total_usd_micros:   Some(330),
+            total_usd_micros: Some(330),
         },
-        by_model:           vec![
+        by_model: vec![
             fabro_workflow::ProjectionBillingByModel {
-                model:   ModelRef {
+                model: ModelRef {
                     provider: Provider::OpenAi,
                     model_id: "gpt-old".to_string(),
-                    speed:    None,
+                    speed: None,
                 },
-                stages:  1,
+                stages: 1,
                 billing: BilledTokenCounts {
-                    input_tokens:       100,
-                    output_tokens:      10,
-                    total_tokens:       110,
-                    reasoning_tokens:   0,
-                    cache_read_tokens:  0,
+                    input_tokens: 100,
+                    output_tokens: 10,
+                    total_tokens: 110,
+                    reasoning_tokens: 0,
+                    cache_read_tokens: 0,
                     cache_write_tokens: 0,
-                    total_usd_micros:   Some(110),
+                    total_usd_micros: Some(110),
                 },
             },
             fabro_workflow::ProjectionBillingByModel {
-                model:   ModelRef {
+                model: ModelRef {
                     provider: Provider::OpenAi,
                     model_id: "gpt-new".to_string(),
-                    speed:    None,
+                    speed: None,
                 },
-                stages:  1,
+                stages: 1,
                 billing: BilledTokenCounts {
-                    input_tokens:       200,
-                    output_tokens:      20,
-                    total_tokens:       220,
-                    reasoning_tokens:   0,
-                    cache_read_tokens:  0,
+                    input_tokens: 200,
+                    output_tokens: 20,
+                    total_tokens: 220,
+                    reasoning_tokens: 0,
+                    cache_read_tokens: 0,
                     cache_write_tokens: 0,
-                    total_usd_micros:   Some(220),
+                    total_usd_micros: Some(220),
                 },
             },
         ],
-        runtime_ms:         2000,
+        runtime_ms: 2000,
         billed_visit_count: 2,
     };
 
@@ -8402,9 +8584,12 @@ async fn cancel_queued_run_succeeds() {
 
     let run_store = state.store.open_run_reader(&run_id).await.unwrap();
     let status = run_store.state().await.unwrap().status;
-    assert_eq!(status, RunStatus::Failed {
-        reason: FailureReason::Cancelled,
-    });
+    assert_eq!(
+        status,
+        RunStatus::Failed {
+            reason: FailureReason::Cancelled,
+        }
+    );
 }
 
 #[tokio::test]
@@ -8587,9 +8772,12 @@ async fn pause_run_immediately_pauses_blocked_run() {
     assert_eq!(run_json_pending_control(&body), &serde_json::Value::Null);
 
     let summary = state.store.runs().find(&run_id).await.unwrap().unwrap();
-    assert_eq!(summary.lifecycle.status, RunStatus::Paused {
-        prior_block: Some(BlockedReason::HumanInputRequired),
-    });
+    assert_eq!(
+        summary.lifecycle.status,
+        RunStatus::Paused {
+            prior_block: Some(BlockedReason::HumanInputRequired),
+        }
+    );
     assert_eq!(summary.lifecycle.pending_control, None);
 }
 
@@ -8696,9 +8884,12 @@ async fn unpause_run_returns_blocked_when_human_gate_is_still_unresolved() {
     assert_eq!(run_json_pending_control(&body), &serde_json::Value::Null);
 
     let summary = state.store.runs().find(&run_id).await.unwrap().unwrap();
-    assert_eq!(summary.lifecycle.status, RunStatus::Blocked {
-        blocked_reason: BlockedReason::HumanInputRequired,
-    });
+    assert_eq!(
+        summary.lifecycle.status,
+        RunStatus::Blocked {
+            blocked_reason: BlockedReason::HumanInputRequired,
+        }
+    );
     assert_eq!(summary.lifecycle.pending_control, None);
 }
 
@@ -8706,29 +8897,39 @@ async fn unpause_run_returns_blocked_when_human_gate_is_still_unresolved() {
 async fn startup_reconciliation_marks_inflight_runs_terminal() {
     let state = test_app_state();
 
-    create_durable_run_with_events(&state, fixtures::RUN_1, &[
-        workflow_event::Event::RunSubmitted {
+    create_durable_run_with_events(
+        &state,
+        fixtures::RUN_1,
+        &[workflow_event::Event::RunSubmitted {
             definition_blob: None,
-        },
-    ])
+        }],
+    )
     .await;
-    create_durable_run_with_events(&state, fixtures::RUN_2, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-    ])
+    create_durable_run_with_events(
+        &state,
+        fixtures::RUN_2,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+        ],
+    )
     .await;
-    create_durable_run_with_events(&state, fixtures::RUN_3, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-        workflow_event::Event::RunPaused,
-        workflow_event::Event::RunCancelRequested { actor: None },
-    ])
+    create_durable_run_with_events(
+        &state,
+        fixtures::RUN_3,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+            workflow_event::Event::RunPaused,
+            workflow_event::Event::RunCancelRequested { actor: None },
+        ],
+    )
     .await;
 
     let reconciled = reconcile_incomplete_runs_on_startup(&state).await.unwrap();
@@ -8753,9 +8954,12 @@ async fn startup_reconciliation_marks_inflight_runs_terminal() {
         .await
         .unwrap();
     let run_2_status = run_2.status;
-    assert_eq!(run_2_status, RunStatus::Failed {
-        reason: FailureReason::Terminated,
-    });
+    assert_eq!(
+        run_2_status,
+        RunStatus::Failed {
+            reason: FailureReason::Terminated,
+        }
+    );
 
     let run_3 = state
         .store
@@ -8766,9 +8970,12 @@ async fn startup_reconciliation_marks_inflight_runs_terminal() {
         .await
         .unwrap();
     let run_3_status = run_3.status;
-    assert_eq!(run_3_status, RunStatus::Failed {
-        reason: FailureReason::Cancelled,
-    });
+    assert_eq!(
+        run_3_status,
+        RunStatus::Failed {
+            reason: FailureReason::Cancelled,
+        }
+    );
     assert_eq!(run_3.pending_control, None);
 }
 
@@ -8778,13 +8985,17 @@ async fn shutdown_active_workers_terminates_process_groups() {
     let state = test_app_state();
     let run_id = fixtures::RUN_4;
 
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-    ])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+        ],
+    )
     .await;
 
     let temp_dir = tempfile::tempdir().unwrap();
@@ -8838,9 +9049,12 @@ async fn shutdown_active_workers_terminates_process_groups() {
         .await
         .unwrap();
     let run_status = run_state.status;
-    assert_eq!(run_status, RunStatus::Failed {
-        reason: FailureReason::Terminated,
-    });
+    assert_eq!(
+        run_status,
+        RunStatus::Failed {
+            reason: FailureReason::Terminated,
+        }
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -8926,9 +9140,12 @@ provider = "local"
 
     let runs = state.runs.lock().expect("runs lock poisoned");
     let managed_run = runs.get(&run_id).expect("run should exist");
-    assert_eq!(managed_run.status, RunStatus::Failed {
-        reason: FailureReason::Cancelled,
-    });
+    assert_eq!(
+        managed_run.status,
+        RunStatus::Failed {
+            reason: FailureReason::Cancelled,
+        }
+    );
     drop(runs);
 
     let run_store = state.store.open_run_reader(&run_id).await.unwrap();
@@ -8948,9 +9165,12 @@ provider = "local"
     }
 
     let status_record = status_record.expect("status record should be persisted");
-    assert_eq!(status_record, RunStatus::Failed {
-        reason: FailureReason::Cancelled,
-    });
+    assert_eq!(
+        status_record,
+        RunStatus::Failed {
+            reason: FailureReason::Cancelled,
+        }
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -9217,6 +9437,81 @@ async fn demo_workflows_return_list_detail_and_runs() {
 }
 
 #[tokio::test]
+async fn live_workflows_return_run_backed_list_detail_and_runs() {
+    let state = test_app_state();
+    let app = crate::test_support::build_test_router(state);
+    let dot_source = r#"digraph DeployFeature {
+    graph [goal="Deploy feature workflow"]
+    start [shape=Mdiamond]
+    exit  [shape=Msquare]
+    start -> exit
+}"#;
+
+    let create_req = Request::builder()
+        .method("POST")
+        .uri(api("/runs"))
+        .header("content-type", "application/json")
+        .body(manifest_body_for("deploy-feature.fabro", dot_source))
+        .unwrap();
+    let create_response = app.clone().oneshot(create_req).await.unwrap();
+    response_json!(create_response, StatusCode::CREATED).await;
+
+    let list_req = Request::builder()
+        .method("GET")
+        .uri(api("/workflows"))
+        .body(Body::empty())
+        .unwrap();
+    let list_response = app.clone().oneshot(list_req).await.unwrap();
+    let list_body = response_json!(list_response, StatusCode::OK).await;
+    let workflows = list_body["data"]
+        .as_array()
+        .expect("workflow list data should be an array");
+    let item = workflows
+        .iter()
+        .find(|workflow| workflow["slug"].as_str() == Some("deploy-feature"))
+        .expect("created workflow should appear in live workflow list");
+    assert_eq!(item["name"], "DeployFeature");
+    assert_eq!(item["filename"], "deploy-feature.fabro");
+    assert!(item["last_run"]["ran_at"].is_string());
+    assert!(item["schedule"].is_null());
+
+    let detail_req = Request::builder()
+        .method("GET")
+        .uri(api("/workflows/deploy-feature"))
+        .body(Body::empty())
+        .unwrap();
+    let detail_response = app.clone().oneshot(detail_req).await.unwrap();
+    let detail_body = response_json!(detail_response, StatusCode::OK).await;
+    assert_eq!(detail_body["slug"], "deploy-feature");
+    assert_eq!(detail_body["name"], "DeployFeature");
+    assert_eq!(detail_body["description"], "Deploy feature workflow");
+    assert_eq!(detail_body["filename"], "deploy-feature.fabro");
+    assert!(detail_body["settings"].is_object());
+    assert!(
+        detail_body["graph"]
+            .as_str()
+            .is_some_and(|graph| graph.contains("DeployFeature"))
+    );
+
+    let runs_req = Request::builder()
+        .method("GET")
+        .uri(api("/workflows/deploy-feature/runs"))
+        .body(Body::empty())
+        .unwrap();
+    let runs_response = app.oneshot(runs_req).await.unwrap();
+    let runs_body = response_json!(runs_response, StatusCode::OK).await;
+    let runs = runs_body["data"]
+        .as_array()
+        .expect("workflow runs data should be an array");
+    assert_eq!(runs.len(), 1);
+    assert!(
+        runs.iter()
+            .all(|run| run["workflow"]["slug"].as_str() == Some("deploy-feature")),
+        "live workflow run list should be scoped to the requested workflow"
+    );
+}
+
+#[tokio::test]
 async fn boards_runs_returns_run_list_items_with_board_columns() {
     let state = test_app_state();
     let app = crate::test_support::build_test_router(Arc::clone(&state));
@@ -9261,14 +9556,18 @@ async fn boards_runs_excludes_removing_status() {
     let run_id = fixtures::RUN_1;
 
     // A run in Removing status should not appear on the board
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-        workflow_event::Event::RunRemoving,
-    ])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+            workflow_event::Event::RunRemoving,
+        ],
+    )
     .await;
 
     let req = Request::builder()
@@ -9291,25 +9590,29 @@ async fn boards_runs_excludes_archived_by_default() {
     let app = crate::test_support::build_test_router(Arc::clone(&state));
     let run_id = fixtures::RUN_1;
 
-    create_durable_run_with_events(&state, run_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-        workflow_event::Event::WorkflowRunCompleted {
-            duration_ms:          1000,
-            artifact_count:       0,
-            status:               "succeeded".to_string(),
-            reason:               SuccessReason::Completed,
-            total_usd_micros:     None,
-            final_git_commit_sha: None,
-            final_patch:          None,
-            diff_summary:         None,
-            billing:              None,
-        },
-        workflow_event::Event::RunArchived { actor: None },
-    ])
+    create_durable_run_with_events(
+        &state,
+        run_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+            workflow_event::Event::WorkflowRunCompleted {
+                duration_ms: 1000,
+                artifact_count: 0,
+                status: "succeeded".to_string(),
+                reason: SuccessReason::Completed,
+                total_usd_micros: None,
+                final_git_commit_sha: None,
+                final_patch: None,
+                diff_summary: None,
+                billing: None,
+            },
+            workflow_event::Event::RunArchived { actor: None },
+        ],
+    )
     .await;
 
     let req = Request::builder()
@@ -9340,44 +9643,52 @@ async fn boards_runs_includes_archived_when_flag_set() {
     let archived_id = fixtures::RUN_1;
     let succeeded_id = fixtures::RUN_2;
 
-    create_durable_run_with_events(&state, archived_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-        workflow_event::Event::WorkflowRunCompleted {
-            duration_ms:          1000,
-            artifact_count:       0,
-            status:               "succeeded".to_string(),
-            reason:               SuccessReason::Completed,
-            total_usd_micros:     None,
-            final_git_commit_sha: None,
-            final_patch:          None,
-            diff_summary:         None,
-            billing:              None,
-        },
-        workflow_event::Event::RunArchived { actor: None },
-    ])
+    create_durable_run_with_events(
+        &state,
+        archived_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+            workflow_event::Event::WorkflowRunCompleted {
+                duration_ms: 1000,
+                artifact_count: 0,
+                status: "succeeded".to_string(),
+                reason: SuccessReason::Completed,
+                total_usd_micros: None,
+                final_git_commit_sha: None,
+                final_patch: None,
+                diff_summary: None,
+                billing: None,
+            },
+            workflow_event::Event::RunArchived { actor: None },
+        ],
+    )
     .await;
-    create_durable_run_with_events(&state, succeeded_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-        workflow_event::Event::WorkflowRunCompleted {
-            duration_ms:          1000,
-            artifact_count:       0,
-            status:               "succeeded".to_string(),
-            reason:               SuccessReason::Completed,
-            total_usd_micros:     None,
-            final_git_commit_sha: None,
-            final_patch:          None,
-            diff_summary:         None,
-            billing:              None,
-        },
-    ])
+    create_durable_run_with_events(
+        &state,
+        succeeded_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+            workflow_event::Event::WorkflowRunCompleted {
+                duration_ms: 1000,
+                artifact_count: 0,
+                status: "succeeded".to_string(),
+                reason: SuccessReason::Completed,
+                total_usd_micros: None,
+                final_git_commit_sha: None,
+                final_patch: None,
+                diff_summary: None,
+                billing: None,
+            },
+        ],
+    )
     .await;
 
     let req = Request::builder()
@@ -9413,15 +9724,18 @@ async fn boards_runs_includes_archived_when_flag_set() {
         .iter()
         .map(|c| c["id"].as_str().unwrap().to_string())
         .collect();
-    assert_eq!(column_ids, vec![
-        "queued",
-        "initializing",
-        "running",
-        "blocked",
-        "succeeded",
-        "failed",
-        "archived",
-    ],);
+    assert_eq!(
+        column_ids,
+        vec![
+            "queued",
+            "initializing",
+            "running",
+            "blocked",
+            "succeeded",
+            "failed",
+            "archived",
+        ],
+    );
 }
 
 #[tokio::test]
@@ -9433,42 +9747,54 @@ async fn get_run_exposes_canonical_operator_statuses() {
     let removing_id = fixtures::RUN_2;
     let blocked_id = fixtures::RUN_3;
 
-    create_durable_run_with_events(&state, succeeded_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-        workflow_event::Event::WorkflowRunCompleted {
-            duration_ms:          1000,
-            artifact_count:       0,
-            status:               "succeeded".to_string(),
-            reason:               SuccessReason::Completed,
-            total_usd_micros:     None,
-            final_git_commit_sha: None,
-            final_patch:          None,
-            diff_summary:         None,
-            billing:              None,
-        },
-    ])
+    create_durable_run_with_events(
+        &state,
+        succeeded_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+            workflow_event::Event::WorkflowRunCompleted {
+                duration_ms: 1000,
+                artifact_count: 0,
+                status: "succeeded".to_string(),
+                reason: SuccessReason::Completed,
+                total_usd_micros: None,
+                final_git_commit_sha: None,
+                final_patch: None,
+                diff_summary: None,
+                billing: None,
+            },
+        ],
+    )
     .await;
 
-    create_durable_run_with_events(&state, removing_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-        workflow_event::Event::RunRemoving,
-    ])
+    create_durable_run_with_events(
+        &state,
+        removing_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+            workflow_event::Event::RunRemoving,
+        ],
+    )
     .await;
-    create_durable_run_with_events(&state, blocked_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-    ])
+    create_durable_run_with_events(
+        &state,
+        blocked_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+        ],
+    )
     .await;
     append_raw_run_event(
         &state,
@@ -9509,41 +9835,53 @@ async fn boards_runs_maps_statuses_to_columns() {
     let succeeded_id = fixtures::RUN_2;
     let blocked_id = fixtures::RUN_3;
 
-    create_durable_run_with_events(&state, paused_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-        workflow_event::Event::RunPaused,
-    ])
+    create_durable_run_with_events(
+        &state,
+        paused_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+            workflow_event::Event::RunPaused,
+        ],
+    )
     .await;
-    create_durable_run_with_events(&state, succeeded_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-        workflow_event::Event::WorkflowRunCompleted {
-            duration_ms:          1000,
-            artifact_count:       0,
-            status:               "succeeded".to_string(),
-            reason:               SuccessReason::Completed,
-            total_usd_micros:     None,
-            final_git_commit_sha: None,
-            final_patch:          None,
-            diff_summary:         None,
-            billing:              None,
-        },
-    ])
+    create_durable_run_with_events(
+        &state,
+        succeeded_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+            workflow_event::Event::WorkflowRunCompleted {
+                duration_ms: 1000,
+                artifact_count: 0,
+                status: "succeeded".to_string(),
+                reason: SuccessReason::Completed,
+                total_usd_micros: None,
+                final_git_commit_sha: None,
+                final_patch: None,
+                diff_summary: None,
+                billing: None,
+            },
+        ],
+    )
     .await;
-    create_durable_run_with_events(&state, blocked_id, &[
-        workflow_event::Event::RunSubmitted {
-            definition_blob: None,
-        },
-        workflow_event::Event::RunStarting,
-        workflow_event::Event::RunRunning,
-    ])
+    create_durable_run_with_events(
+        &state,
+        blocked_id,
+        &[
+            workflow_event::Event::RunSubmitted {
+                definition_blob: None,
+            },
+            workflow_event::Event::RunStarting,
+            workflow_event::Event::RunRunning,
+        ],
+    )
     .await;
     append_raw_run_event(
         &state,
@@ -9670,30 +10008,30 @@ async fn boards_runs_includes_live_board_metadata_from_run_state() {
         workflow_event::Event::RunStarting,
         workflow_event::Event::RunRunning,
         workflow_event::Event::SandboxInitialized {
-            provider:          SandboxProvider::Local,
-            id:                "sb-test".to_string(),
+            provider: SandboxProvider::Local,
+            id: "sb-test".to_string(),
             working_directory: "/sandbox/workdir".to_string(),
-            repo_cloned:       None,
-            clone_origin_url:  None,
-            clone_branch:      None,
+            repo_cloned: None,
+            clone_origin_url: None,
+            clone_branch: None,
         },
         workflow_event::Event::PullRequestCreated {
-            pr_url:      "https://github.com/acme/repo/pull/42".to_string(),
-            pr_number:   42,
-            owner:       "acme".to_string(),
-            repo:        "repo".to_string(),
+            pr_url: "https://github.com/acme/repo/pull/42".to_string(),
+            pr_number: 42,
+            owner: "acme".to_string(),
+            repo: "repo".to_string(),
             base_branch: "main".to_string(),
             head_branch: "fabro/run".to_string(),
-            title:       "Fix board metadata".to_string(),
-            draft:       false,
+            title: "Fix board metadata".to_string(),
+            draft: false,
         },
         workflow_event::Event::InterviewStarted {
-            question_id:     "q-1".to_string(),
-            question:        "Ship it?".to_string(),
-            stage:           "review".to_string(),
-            question_type:   "yes_no".to_string(),
-            options:         vec![],
-            allow_freeform:  false,
+            question_id: "q-1".to_string(),
+            question: "Ship it?".to_string(),
+            stage: "review".to_string(),
+            question_type: "yes_no".to_string(),
+            options: vec![],
+            allow_freeform: false,
             timeout_seconds: None,
             context_display: None,
         },
@@ -9745,12 +10083,12 @@ async fn boards_runs_page_limit_preserves_metadata_for_paged_items() {
             workflow_event::Event::RunStarting,
             workflow_event::Event::RunRunning,
             workflow_event::Event::SandboxInitialized {
-                provider:          SandboxProvider::Local,
-                id:                sandbox_id.to_string(),
+                provider: SandboxProvider::Local,
+                id: sandbox_id.to_string(),
                 working_directory: "/sandbox/workdir".to_string(),
-                repo_cloned:       None,
-                clone_origin_url:  None,
-                clone_branch:      None,
+                repo_cloned: None,
+                clone_origin_url: None,
+                clone_branch: None,
             },
         ] {
             workflow_event::append_event(&run_store, &run_id, &event)

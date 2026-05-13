@@ -1,0 +1,129 @@
+name: Publish Maestro Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Extra image tag to publish"
+        required: false
+        default: "maestro-dev"
+  push:
+    branches:
+      - spike/openrouter-slack-gates
+    paths:
+      - "Dockerfile"
+      - "docker/**"
+      - "apps/fabro-web/**"
+      - "lib/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/publish-maestro-image.yml"
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  CARGO_TERM_COLOR: always
+  IMAGE_NAME: ghcr.io/modernagencysales/fabro-maestro
+  LIBZ_SYS_STATIC: "1"
+
+jobs:
+  publish-amd64:
+    name: Build and publish linux/amd64 image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          no-cache: true
+
+      - name: Install Bun dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Linux build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev musl-tools
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@8d6198c65fb0feaa111df26e6b467fea8345e46f # v2.0.5
+        with:
+          version: 0.13.0
+
+      - name: Install cargo-zigbuild
+        uses: taiki-e/install-action@773334c0e05d7e699e4d78234494308223f3a2cf # v2
+        with:
+          tool: cargo-zigbuild
+
+      - name: Refresh embedded SPA
+        run: cargo dev spa refresh
+
+      - name: Build Fabro CLI/server binary
+        run: cargo zigbuild --target x86_64-unknown-linux-musl --release -p fabro-cli
+
+      - name: Stage binary for Docker build context
+        run: |
+          mkdir -p tmp/docker-context/amd64
+          cp target/x86_64-unknown-linux-musl/release/fabro tmp/docker-context/amd64/fabro
+
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: tag
+        name: Compute tags
+        shell: bash
+        run: |
+          requested="${{ github.event.inputs.tag }}"
+          if [[ -z "$requested" ]]; then
+            requested="maestro-dev"
+          fi
+          short_sha="${GITHUB_SHA::12}"
+          {
+            echo "tags<<EOF"
+            echo "${IMAGE_NAME}:${requested}"
+            echo "${IMAGE_NAME}:sha-${short_sha}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tag.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/modernagencysales/fabro-maestro
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=Fabro Maestro
+
+      - name: Attest image provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Print published image
+        run: |
+          echo "Published:"
+          echo "${{ steps.tag.outputs.tags }}"

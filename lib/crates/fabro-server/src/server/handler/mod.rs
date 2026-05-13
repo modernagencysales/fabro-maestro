@@ -18,6 +18,7 @@ mod sandbox;
 mod secrets;
 mod steer;
 pub(in crate::server) mod system;
+mod workflows;
 
 pub(super) use system::{health, openapi_spec};
 
@@ -124,9 +125,6 @@ pub(super) fn demo_routes() -> Router<Arc<AppState>> {
 pub(super) fn real_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/runs/{id}/stages/{stageId}/turns", get(not_implemented))
-        .route("/workflows", get(not_implemented))
-        .route("/workflows/{name}", get(not_implemented))
-        .route("/workflows/{name}/runs", get(not_implemented))
         .route(
             "/insights/queries",
             get(not_implemented).post(not_implemented),
@@ -147,6 +145,7 @@ pub(super) fn real_routes() -> Router<Arc<AppState>> {
         .merge(sandbox::routes())
         .merge(lifecycle::routes())
         .merge(steer::routes())
+        .merge(workflows::routes())
         .merge(graph::manifest_routes())
         .merge(graph::run_routes())
         .merge(models::routes())

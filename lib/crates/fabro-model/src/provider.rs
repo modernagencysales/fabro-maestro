@@ -33,6 +33,9 @@ pub enum Provider {
     Minimax,
     #[strum(to_string = "inception", serialize = "inception_labs")]
     Inception,
+    #[serde(rename = "openrouter")]
+    #[strum(to_string = "openrouter")]
+    OpenRouter,
     #[serde(rename = "openai_compatible", alias = "open_ai_compatible")]
     #[strum(to_string = "openai_compatible", serialize = "open_ai_compatible")]
     OpenAiCompatible,
@@ -48,6 +51,7 @@ impl Provider {
         Self::Zai,
         Self::Minimax,
         Self::Inception,
+        Self::OpenRouter,
     ];
 
     /// Environment variable names that can provide the API key for this
@@ -63,6 +67,7 @@ impl Provider {
             Self::Zai => &[EnvVars::ZAI_API_KEY],
             Self::Minimax => &[EnvVars::MINIMAX_API_KEY],
             Self::Inception => &[EnvVars::INCEPTION_API_KEY],
+            Self::OpenRouter => &[EnvVars::OPENROUTER_API_KEY],
             Self::OpenAiCompatible => &[],
         }
     }
@@ -117,6 +122,7 @@ impl Provider {
             Self::Zai => "Zai",
             Self::Minimax => "Minimax",
             Self::Inception => "Inception",
+            Self::OpenRouter => "OpenRouter",
             Self::OpenAiCompatible => "OpenAI Compatible",
         }
     }
@@ -178,6 +184,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_openrouter() {
+        assert_eq!(
+            "openrouter".parse::<Provider>().unwrap(),
+            Provider::OpenRouter
+        );
+    }
+
+    #[test]
+    fn openrouter_as_str() {
+        assert_eq!(Provider::OpenRouter.to_string(), "openrouter");
+        assert_eq!(<&'static str>::from(Provider::OpenRouter), "openrouter");
+    }
+
+    #[test]
     fn default_with_all_configured_prefers_anthropic() {
         assert_eq!(Provider::default_with(|_| true), Provider::Anthropic);
     }
@@ -229,9 +249,10 @@ mod tests {
 
     #[test]
     fn api_key_env_vars_anthropic() {
-        assert_eq!(Provider::Anthropic.api_key_env_vars(), &[
-            "ANTHROPIC_API_KEY"
-        ]);
+        assert_eq!(
+            Provider::Anthropic.api_key_env_vars(),
+            &["ANTHROPIC_API_KEY"]
+        );
     }
 
     #[test]
@@ -263,9 +284,18 @@ mod tests {
 
     #[test]
     fn api_key_env_vars_inception() {
-        assert_eq!(Provider::Inception.api_key_env_vars(), &[
-            "INCEPTION_API_KEY"
-        ]);
+        assert_eq!(
+            Provider::Inception.api_key_env_vars(),
+            &["INCEPTION_API_KEY"]
+        );
+    }
+
+    #[test]
+    fn api_key_env_vars_openrouter() {
+        assert_eq!(
+            Provider::OpenRouter.api_key_env_vars(),
+            &["OPENROUTER_API_KEY"]
+        );
     }
 
     #[test]

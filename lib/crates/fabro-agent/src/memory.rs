@@ -25,6 +25,7 @@ pub async fn discover_memory(
         | Provider::Zai
         | Provider::Minimax
         | Provider::Inception
+        | Provider::OpenRouter
         | Provider::OpenAiCompatible => {
             vec!["AGENTS.md", ".codex/instructions.md"]
         }

@@ -14,13 +14,14 @@ const KIMI_BASE_URL: &str = "https://api.moonshot.ai/v1";
 const ZAI_BASE_URL: &str = "https://api.z.ai/api/coding/paas/v4";
 const MINIMAX_BASE_URL: &str = "https://api.minimax.io/v1";
 const INCEPTION_BASE_URL: &str = "https://api.inceptionlabs.ai/v1";
+const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 
 /// The core client that routes requests to provider adapters (Section 2.2, 3).
 #[derive(Clone)]
 pub struct Client {
-    providers:        HashMap<String, Arc<dyn ProviderAdapter>>,
+    providers: HashMap<String, Arc<dyn ProviderAdapter>>,
     default_provider: Option<String>,
-    middleware:       Vec<Arc<dyn Middleware>>,
+    middleware: Vec<Arc<dyn Middleware>>,
 }
 
 impl Client {
@@ -47,7 +48,7 @@ impl Client {
     pub async fn from_source(source: &dyn CredentialSource) -> Result<Self, Error> {
         let resolved = source.resolve().await.map_err(|err| Error::Configuration {
             message: format!("Failed to resolve LLM credentials: {err}"),
-            source:  None,
+            source: None,
         })?;
         Self::from_credentials(resolved.credentials).await
     }
@@ -59,9 +60,9 @@ impl Client {
     /// Returns `Error` if any provider adapter fails to initialize.
     pub async fn from_credentials(credentials: Vec<ApiCredential>) -> Result<Self, Error> {
         let mut client = Self {
-            providers:        HashMap::new(),
+            providers: HashMap::new(),
             default_provider: None,
-            middleware:       Vec::new(),
+            middleware: Vec::new(),
         };
 
         for credential in credentials {
@@ -158,11 +159,24 @@ impl Client {
                     }
                     client.register_provider(Arc::new(adapter)).await?;
                 }
+                fabro_model::Provider::OpenRouter => {
+                    let mut adapter = providers::OpenAiCompatibleAdapter::new(
+                        auth_value,
+                        credential
+                            .base_url
+                            .unwrap_or_else(|| OPENROUTER_BASE_URL.to_string()),
+                    )
+                    .with_name("openrouter");
+                    if !credential.extra_headers.is_empty() {
+                        adapter = adapter.with_default_headers(credential.extra_headers);
+                    }
+                    client.register_provider(Arc::new(adapter)).await?;
+                }
                 fabro_model::Provider::OpenAiCompatible => {
                     return Err(Error::Configuration {
                         message: "Provider::OpenAiCompatible is not supported by from_credentials"
                             .to_string(),
-                        source:  None,
+                        source: None,
                     });
                 }
             }
@@ -215,7 +229,7 @@ impl Client {
             .or(self.default_provider.as_deref())
             .ok_or_else(|| Error::Configuration {
                 message: "No provider specified and no default provider set".into(),
-                source:  None,
+                source: None,
             })?;
 
         self.providers
@@ -223,7 +237,7 @@ impl Client {
             .cloned()
             .ok_or_else(|| Error::Configuration {
                 message: format!("Provider '{provider_name}' not registered"),
-                source:  None,
+                source: None,
             })
     }
 
@@ -359,19 +373,19 @@ mod tests {
 
         async fn complete(&self, _request: &Request) -> Result<Response, Error> {
             Ok(Response {
-                id:            "resp_mock".into(),
-                model:         "mock-model".into(),
-                provider:      self.provider_name.clone(),
-                message:       Message::assistant(&self.response_text),
+                id: "resp_mock".into(),
+                model: "mock-model".into(),
+                provider: self.provider_name.clone(),
+                message: Message::assistant(&self.response_text),
                 finish_reason: FinishReason::Stop,
-                usage:         TokenCounts {
+                usage: TokenCounts {
                     input_tokens: 10,
                     output_tokens: 20,
                     ..Default::default()
                 },
-                raw:           None,
-                warnings:      vec![],
-                rate_limit:    None,
+                raw: None,
+                warnings: vec![],
+                rate_limit: None,
             })
         }
 
@@ -402,19 +416,19 @@ mod tests {
 
     fn test_request() -> Request {
         Request {
-            model:            "mock-model".into(),
-            messages:         vec![Message::user("Hello")],
-            provider:         None,
-            tools:            None,
-            tool_choice:      None,
-            response_format:  None,
-            temperature:      None,
-            top_p:            None,
-            max_tokens:       None,
-            stop_sequences:   None,
+            model: "mock-model".into(),
+            messages: vec![Message::user("Hello")],
+            provider: None,
+            tools: None,
+            tool_choice: None,
+            response_format: None,
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+            stop_sequences: None,
             reasoning_effort: None,
-            speed:            None,
-            metadata:         None,
+            speed: None,
+            metadata: None,
             provider_options: None,
         }
     }
@@ -498,25 +512,25 @@ mod tests {
     async fn from_credentials_registers_multiple_providers() {
         let client = Client::from_credentials(vec![
             ApiCredential {
-                provider:      fabro_model::Provider::Anthropic,
-                auth_header:   ApiKeyHeader::Custom {
-                    name:  "x-api-key".to_string(),
+                provider: fabro_model::Provider::Anthropic,
+                auth_header: ApiKeyHeader::Custom {
+                    name: "x-api-key".to_string(),
                     value: "anthropic-key".to_string(),
                 },
                 extra_headers: HashMap::new(),
-                base_url:      None,
-                codex_mode:    false,
-                org_id:        None,
-                project_id:    None,
+                base_url: None,
+                codex_mode: false,
+                org_id: None,
+                project_id: None,
             },
             ApiCredential {
-                provider:      fabro_model::Provider::OpenAi,
-                auth_header:   ApiKeyHeader::Bearer("openai-key".to_string()),
+                provider: fabro_model::Provider::OpenAi,
+                auth_header: ApiKeyHeader::Bearer("openai-key".to_string()),
                 extra_headers: HashMap::new(),
-                base_url:      None,
-                codex_mode:    false,
-                org_id:        None,
-                project_id:    None,
+                base_url: None,
+                codex_mode: false,
+                org_id: None,
+                project_id: None,
             },
         ])
         .await
@@ -531,13 +545,13 @@ mod tests {
     #[tokio::test]
     async fn from_credentials_supports_openai_compatible_provider_constants() {
         let client = Client::from_credentials(vec![ApiCredential {
-            provider:      fabro_model::Provider::Kimi,
-            auth_header:   ApiKeyHeader::Bearer("kimi-key".to_string()),
+            provider: fabro_model::Provider::Kimi,
+            auth_header: ApiKeyHeader::Bearer("kimi-key".to_string()),
             extra_headers: HashMap::new(),
-            base_url:      None,
-            codex_mode:    false,
-            org_id:        None,
-            project_id:    None,
+            base_url: None,
+            codex_mode: false,
+            org_id: None,
+            project_id: None,
         }])
         .await
         .unwrap();
@@ -547,19 +561,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn from_credentials_supports_openrouter_provider() {
+        let client = Client::from_credentials(vec![ApiCredential {
+            provider: fabro_model::Provider::OpenRouter,
+            auth_header: ApiKeyHeader::Bearer("openrouter-key".to_string()),
+            extra_headers: HashMap::new(),
+            base_url: None,
+            codex_mode: false,
+            org_id: None,
+            project_id: None,
+        }])
+        .await
+        .unwrap();
+
+        assert_eq!(client.provider_names(), vec!["openrouter"]);
+        assert_eq!(client.default_provider(), Some("openrouter"));
+    }
+
+    #[tokio::test]
     async fn from_source_registers_provider_from_resolved_credentials() {
         let source = StubSource {
             credentials: vec![ApiCredential {
-                provider:      fabro_model::Provider::Anthropic,
-                auth_header:   ApiKeyHeader::Custom {
-                    name:  "x-api-key".to_string(),
+                provider: fabro_model::Provider::Anthropic,
+                auth_header: ApiKeyHeader::Custom {
+                    name: "x-api-key".to_string(),
                     value: "anthropic-key".to_string(),
                 },
                 extra_headers: HashMap::new(),
-                base_url:      None,
-                codex_mode:    false,
-                org_id:        None,
-                project_id:    None,
+                base_url: None,
+                codex_mode: false,
+                org_id: None,
+                project_id: None,
             }],
         };
 

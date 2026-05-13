@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use fabro_agent::{Sandbox, ToolEnvProvider};
-use fabro_auth::{CliAgentKind, CredentialResolver, CredentialUsage, ResolvedCredential};
+use fabro_auth::{CliAgentKind, CredentialResolver, CredentialUsage, ResolveError, ResolvedCredential};
 use fabro_model::Provider;
 use tokio_util::sync::CancellationToken;
 
@@ -32,46 +32,59 @@ pub(crate) async fn resolve_agent_launch_env(
     };
 
     let mut launch_env = if let Some(resolver) = request.resolver {
-        let resolved = resolver
+        match resolver
             .resolve(request.provider, CredentialUsage::CliAgent(cli_agent))
             .await
-            .map_err(|err| {
-                Error::handler_with_source(
+        {
+            Ok(ResolvedCredential::Cli(cli_credential)) => {
+                if let Some(login_cmd) = &cli_credential.login_command {
+                    let login_result = request
+                        .sandbox
+                        .exec_command(
+                            login_cmd,
+                            30_000,
+                            None,
+                            None,
+                            Some(request.cancel_token.child_token()),
+                        )
+                        .await
+                        .map_err(|err| {
+                            Error::handler_with_source(
+                                format!("{} credential login failed", request.stage_label),
+                                &err,
+                            )
+                        })?;
+                    if !login_result.is_success() {
+                        tracing::warn!(
+                            exit_code = login_result.display_exit_code(),
+                            stage = request.stage_label,
+                            "{} credential login failed: {}",
+                            request.stage_label,
+                            login_result.stderr
+                        );
+                    }
+                }
+                cli_credential.env_vars
+            }
+            Ok(ResolvedCredential::Api(_)) => {
+                return Err(Error::handler("Expected CLI credential".to_string()));
+            }
+            Err(ResolveError::NotConfigured(provider)) => {
+                tracing::info!(
+                    %provider,
+                    cli = ?request.cli,
+                    stage = request.stage_label,
+                    "No stored provider credential for CLI backend; using ambient CLI authentication"
+                );
+                HashMap::new()
+            }
+            Err(err) => {
+                return Err(Error::handler_with_source(
                     format!("Failed to resolve {} credential", request.stage_label),
                     &err,
-                )
-            })?;
-        let ResolvedCredential::Cli(cli_credential) = resolved else {
-            return Err(Error::handler("Expected CLI credential".to_string()));
-        };
-        if let Some(login_cmd) = &cli_credential.login_command {
-            let login_result = request
-                .sandbox
-                .exec_command(
-                    login_cmd,
-                    30_000,
-                    None,
-                    None,
-                    Some(request.cancel_token.child_token()),
-                )
-                .await
-                .map_err(|err| {
-                    Error::handler_with_source(
-                        format!("{} credential login failed", request.stage_label),
-                        &err,
-                    )
-                })?;
-            if !login_result.is_success() {
-                tracing::warn!(
-                    exit_code = login_result.display_exit_code(),
-                    stage = request.stage_label,
-                    "{} credential login failed: {}",
-                    request.stage_label,
-                    login_result.stderr
-                );
+                ));
             }
         }
-        cli_credential.env_vars
     } else {
         let mut env = HashMap::new();
         for name in request.provider.api_key_env_vars() {

@@ -64,7 +64,7 @@ use fabro_sandbox::reconnect::reconnect_for_run;
 use fabro_sandbox::{Sandbox, SandboxProvider};
 use fabro_slack::client::{PostedMessage as SlackPostedMessage, SlackClient};
 use fabro_slack::config::resolve_credentials as resolve_slack_credentials;
-use fabro_slack::payload::SlackAnswerSubmission;
+use fabro_slack::payload::{SlackAnswerSubmission, SlackGateDecision, SlackGateDecisionSubmission};
 use fabro_slack::threads::ThreadRegistry;
 use fabro_slack::{blocks as slack_blocks, connection as slack_connection};
 use fabro_static::EnvVars;
@@ -80,8 +80,8 @@ use fabro_types::settings::server::{
 };
 use fabro_types::settings::{InterpString, RunNamespace};
 use fabro_types::{
-    EventBody, InterviewQuestionRecord, Principal, PullRequestRecord, QuestionType, RunBlobId,
-    RunControlAction, RunEvent, RunId, ServerSettings, SessionCapability,
+    EventBody, InterviewOption, InterviewQuestionRecord, Principal, PullRequestRecord,
+    QuestionType, RunBlobId, RunControlAction, RunEvent, RunId, ServerSettings, SessionCapability,
 };
 use fabro_util::error::{SharedError, collect_causes, render_with_causes};
 use fabro_util::version::FABRO_VERSION;
@@ -160,7 +160,7 @@ pub fn default_page_limit() -> u32 {
 #[derive(serde::Deserialize)]
 pub struct PaginationParams {
     #[serde(rename = "page[limit]", default = "default_page_limit")]
-    pub limit:  u32,
+    pub limit: u32,
     #[serde(rename = "page[offset]", default)]
     pub offset: u32,
 }
@@ -233,16 +233,16 @@ const WORKER_CONTROL_ENQUEUE_TIMEOUT: Duration = Duration::from_secs(1);
 /// Per-model billing totals.
 #[derive(Default)]
 struct ModelBillingTotals {
-    stages:  i64,
+    stages: i64,
     billing: BilledTokenCounts,
 }
 
 /// In-memory aggregate billing counters, reset on server restart.
 #[derive(Default)]
 struct BillingAccumulator {
-    total_runs:         i64,
+    total_runs: i64,
     total_runtime_secs: f64,
-    by_model:           HashMap<String, ModelBillingTotals>,
+    by_model: HashMap<String, ModelBillingTotals>,
 }
 
 pub(crate) type RegistryFactoryOverride =
@@ -254,7 +254,7 @@ enum RunAnswerTransport {
         control_tx: mpsc::Sender<WorkerControlEnvelope>,
     },
     InProcess {
-        interviewer:  Arc<ControlInterviewer>,
+        interviewer: Arc<ControlInterviewer>,
         steering_hub: Arc<fabro_workflow::SteeringHub>,
     },
 }
@@ -359,15 +359,15 @@ impl RunAnswerTransport {
 
 #[derive(Debug, Clone)]
 struct LoadedPendingInterview {
-    run_id:   RunId,
-    qid:      String,
+    run_id: RunId,
+    qid: String,
     question: InterviewQuestionRecord,
 }
 
 #[derive(Clone)]
 struct SlackService {
-    client:          SlackClient,
-    app_token:       String,
+    client: SlackClient,
+    app_token: String,
     default_channel: String,
     posted_messages: Arc<Mutex<HashMap<(RunId, String), SlackPostedMessage>>>,
     thread_registry: Arc<ThreadRegistry>,
@@ -401,12 +401,12 @@ impl SlackService {
                 }
 
                 let question = runtime_question_from_interview_record(&InterviewQuestionRecord {
-                    id:              props.question_id.clone(),
-                    text:            props.question.clone(),
-                    stage:           props.stage.clone(),
-                    question_type:   props.question_type.parse().unwrap_or_default(),
-                    options:         props.options.clone(),
-                    allow_freeform:  props.allow_freeform,
+                    id: props.question_id.clone(),
+                    text: props.question.clone(),
+                    stage: props.stage.clone(),
+                    question_type: props.question_type.parse().unwrap_or_default(),
+                    options: props.options.clone(),
+                    allow_freeform: props.allow_freeform,
                     timeout_seconds: props.timeout_seconds,
                     context_display: props.context_display.clone(),
                 });
@@ -416,22 +416,34 @@ impl SlackService {
                     &question,
                 );
 
-                if let Ok(posted) = self
+                match self
                     .client
                     .post_message(&self.default_channel, &blocks, None)
                     .await
                 {
-                    if question.allow_freeform || question.question_type == QuestionType::Freeform {
-                        self.thread_registry.register(
-                            &posted.ts,
-                            &event.run_id.to_string(),
-                            &props.question_id,
+                    Ok(posted) => {
+                        if question.allow_freeform
+                            || question.question_type == QuestionType::Freeform
+                        {
+                            self.thread_registry.register(
+                                &posted.ts,
+                                &event.run_id.to_string(),
+                                &props.question_id,
+                            );
+                        }
+                        self.posted_messages
+                            .lock()
+                            .expect("slack posted messages lock poisoned")
+                            .insert(key, posted);
+                    }
+                    Err(err) => {
+                        warn!(
+                            run_id = %event.run_id,
+                            question_id = props.question_id.as_str(),
+                            error = %err,
+                            "Failed to post Slack interview message"
                         );
                     }
-                    self.posted_messages
-                        .lock()
-                        .expect("slack posted messages lock poisoned")
-                        .insert(key, posted);
                 }
             }
             EventBody::InterviewCompleted(props) => {
@@ -502,6 +514,29 @@ impl SlackService {
         let answer_submission = AnswerSubmission::new(submission.answer, submission.actor);
         let _ = submit_pending_interview_answer(state.as_ref(), &pending, answer_submission).await;
     }
+
+    async fn submit_gate_decision(
+        &self,
+        state: Arc<AppState>,
+        submission: SlackGateDecisionSubmission,
+    ) {
+        let Ok(run_id) = RunId::from_str(&submission.run_id) else {
+            return;
+        };
+
+        let Ok(pending) = load_pending_interview(state.as_ref(), run_id, &submission.gate_id).await
+        else {
+            return;
+        };
+        let decision = GateDecision::from(submission.decision);
+        let Ok(answer) =
+            answer_from_gate_decision(decision, &serde_json::Value::Null, &pending.question)
+        else {
+            return;
+        };
+        let answer_submission = AnswerSubmission::new(answer, submission.actor);
+        let _ = submit_pending_interview_answer(state.as_ref(), &pending, answer_submission).await;
+    }
 }
 
 /// Shared application state for the server.
@@ -540,10 +575,10 @@ pub struct AppState {
 type PullRequestCreateLocks = Arc<Mutex<HashMap<RunId, Arc<AsyncMutex<()>>>>>;
 
 struct PullRequestCreateGuard {
-    locks:  PullRequestCreateLocks,
+    locks: PullRequestCreateLocks,
     run_id: RunId,
-    mutex:  Arc<AsyncMutex<()>>,
-    guard:  Option<OwnedMutexGuard<()>>,
+    mutex: Arc<AsyncMutex<()>>,
+    guard: Option<OwnedMutexGuard<()>>,
 }
 
 impl Drop for PullRequestCreateGuard {
@@ -584,22 +619,22 @@ async fn lock_pull_request_create(
 }
 
 pub(crate) struct AppStateConfig {
-    pub(crate) resolved_settings:         ResolvedAppStateSettings,
+    pub(crate) resolved_settings: ResolvedAppStateSettings,
     pub(crate) registry_factory_override: Option<Box<RegistryFactoryOverride>>,
-    pub(crate) max_concurrent_runs:       usize,
-    pub(crate) store:                     Arc<Database>,
-    pub(crate) artifact_store:            ArtifactStore,
-    pub(crate) vault_path:                PathBuf,
-    pub(crate) server_secrets:            ServerSecrets,
-    pub(crate) env_lookup:                EnvLookup,
-    pub(crate) github_api_base_url:       Option<String>,
-    pub(crate) http_client:               Option<fabro_http::HttpClient>,
-    pub(crate) shutdown:                  CancellationToken,
+    pub(crate) max_concurrent_runs: usize,
+    pub(crate) store: Arc<Database>,
+    pub(crate) artifact_store: ArtifactStore,
+    pub(crate) vault_path: PathBuf,
+    pub(crate) server_secrets: ServerSecrets,
+    pub(crate) env_lookup: EnvLookup,
+    pub(crate) github_api_base_url: Option<String>,
+    pub(crate) http_client: Option<fabro_http::HttpClient>,
+    pub(crate) shutdown: CancellationToken,
 }
 
 #[derive(Clone)]
 pub(crate) struct ResolvedAppStateSettings {
-    pub(crate) server_settings:       ServerSettings,
+    pub(crate) server_settings: ServerSettings,
     pub(crate) manifest_run_defaults: RunLayer,
     pub(crate) manifest_run_settings: std::result::Result<RunNamespace, SharedError>,
 }
@@ -916,13 +951,24 @@ fn start_optional_slack_service(state: &Arc<AppState>) {
 
     let socket_state = Arc::clone(state);
     tokio::spawn(async move {
+        let submit_state = Arc::clone(&socket_state);
         let submit_service = Arc::clone(&service);
         let on_submit: Arc<dyn Fn(SlackAnswerSubmission) + Send + Sync> =
             Arc::new(move |submission| {
-                let state = Arc::clone(&socket_state);
+                let state = Arc::clone(&submit_state);
                 let service = Arc::clone(&submit_service);
                 tokio::spawn(async move {
                     service.submit_answer(state, submission).await;
+                });
+            });
+        let gate_state = Arc::clone(&socket_state);
+        let gate_service = Arc::clone(&service);
+        let on_gate_decision: Arc<dyn Fn(SlackGateDecisionSubmission) + Send + Sync> =
+            Arc::new(move |submission| {
+                let state = Arc::clone(&gate_state);
+                let service = Arc::clone(&gate_service);
+                tokio::spawn(async move {
+                    service.submit_gate_decision(state, submission).await;
                 });
             });
         slack_connection::run(
@@ -930,6 +976,7 @@ fn start_optional_slack_service(state: &Arc<AppState>) {
             &service.app_token,
             &service.thread_registry,
             on_submit,
+            on_gate_decision,
         )
         .await;
     });
@@ -951,25 +998,25 @@ pub fn build_router(state: Arc<AppState>, auth_mode: AuthMode) -> Router {
 
 #[derive(Clone, Debug)]
 pub struct RouterOptions {
-    pub web_enabled:                 bool,
-    pub static_asset_root:           Option<PathBuf>,
-    pub github_endpoints:            Option<Arc<GithubEndpoints>>,
+    pub web_enabled: bool,
+    pub static_asset_root: Option<PathBuf>,
+    pub github_endpoints: Option<Arc<GithubEndpoints>>,
     pub github_webhook_ip_allowlist: Option<Arc<IpAllowlistConfig>>,
     /// Set when serving with the `--watch-web` dev flag. The static-file
     /// handler then refuses to fall back to the embedded SPA snapshot and
     /// returns a 503 "build in progress" page on miss, so developers see
     /// their edits or a clear signal — never stale embedded bytes.
-    pub watch_web:                   bool,
+    pub watch_web: bool,
 }
 
 impl Default for RouterOptions {
     fn default() -> Self {
         Self {
-            web_enabled:                 true,
-            static_asset_root:           None,
-            github_endpoints:            None,
+            web_enabled: true,
+            static_asset_root: None,
+            github_endpoints: None,
             github_webhook_ip_allowlist: None,
-            watch_web:                   false,
+            watch_web: false,
         }
     }
 }
@@ -1280,8 +1327,8 @@ fn system_features(
 }
 
 struct PrunePlan {
-    run_ids:          Vec<RunId>,
-    rows:             Vec<PruneRunEntry>,
+    run_ids: Vec<RunId>,
+    rows: Vec<PruneRunEntry>,
     total_size_bytes: u64,
 }
 
@@ -1313,12 +1360,12 @@ fn build_disk_usage_response(
         }
         if verbose {
             run_rows.push(DiskUsageRunRow {
-                run_id:        Some(run.run_id().to_string()),
+                run_id: Some(run.run_id().to_string()),
                 workflow_name: Some(run.workflow_name()),
-                status:        Some(run.status().to_string()),
-                start_time:    Some(run.start_time()),
-                size_bytes:    Some(to_i64(size)),
-                reclaimable:   Some(!run.status().is_active()),
+                status: Some(run.status().to_string()),
+                start_time: Some(run.start_time()),
+                size_bytes: Some(to_i64(size)),
+                reclaimable: Some(!run.status().is_active()),
             });
         }
     }
@@ -1339,25 +1386,25 @@ fn build_disk_usage_response(
     }
 
     Ok(DiskUsageResponse {
-        summary:                 vec![
+        summary: vec![
             DiskUsageSummaryRow {
-                type_:             Some("runs".to_string()),
-                count:             Some(to_i64(runs.len())),
-                active:            Some(to_i64(active_count)),
-                size_bytes:        Some(to_i64(total_run_size)),
+                type_: Some("runs".to_string()),
+                count: Some(to_i64(runs.len())),
+                active: Some(to_i64(active_count)),
+                size_bytes: Some(to_i64(total_run_size)),
                 reclaimable_bytes: Some(to_i64(reclaimable_run_size)),
             },
             DiskUsageSummaryRow {
-                type_:             Some("logs".to_string()),
-                count:             Some(to_i64(log_count)),
-                active:            None,
-                size_bytes:        Some(to_i64(total_log_size)),
+                type_: Some("logs".to_string()),
+                count: Some(to_i64(log_count)),
+                active: None,
+                size_bytes: Some(to_i64(total_log_size)),
                 reclaimable_bytes: Some(to_i64(total_log_size)),
             },
         ],
-        total_size_bytes:        Some(to_i64(total_run_size + total_log_size)),
+        total_size_bytes: Some(to_i64(total_run_size + total_log_size)),
         total_reclaimable_bytes: Some(to_i64(reclaimable_run_size + total_log_size)),
-        runs:                    verbose.then_some(run_rows),
+        runs: verbose.then_some(run_rows),
     })
 }
 
@@ -1407,10 +1454,10 @@ fn build_prune_plan(
     let rows = filtered
         .iter()
         .map(|run| PruneRunEntry {
-            run_id:        Some(run.run_id().to_string()),
-            dir_name:      Some(run.dir_name.clone()),
+            run_id: Some(run.run_id().to_string()),
+            dir_name: Some(run.dir_name.clone()),
             workflow_name: Some(run.workflow_name()),
-            size_bytes:    Some(to_i64(dir_size(&run.path))),
+            size_bytes: Some(to_i64(dir_size(&run.path))),
         })
         .collect::<Vec<_>>();
     let total_size_bytes = rows
@@ -1705,11 +1752,11 @@ async fn delete_run_sandbox_resource(
     };
     if preserve {
         return Ok(DeleteRunOutcome::Preserved(DeleteRunResponse {
-            deleted:           true,
+            deleted: true,
             sandbox_preserved: true,
-            sandbox:           DeleteRunSandbox {
+            sandbox: DeleteRunSandbox {
                 provider: record.provider,
-                id:       record
+                id: record
                     .runtime
                     .as_ref()
                     .map(|runtime| runtime.id.clone())
@@ -2007,7 +2054,7 @@ fn release_run_answer_claim(state: &AppState, run_id: RunId, qid: &str) {
 
 #[derive(Clone, Copy)]
 struct LiveWorkerProcess {
-    run_id:           RunId,
+    run_id: RunId,
     process_group_id: u32,
 }
 
@@ -2194,12 +2241,12 @@ async fn persist_cancelled_run_status(state: &AppState, run_id: RunId) -> anyhow
         &run_store,
         &run_id,
         &workflow_event::Event::WorkflowRunFailed {
-            error:          WorkflowError::Cancelled,
-            duration_ms:    0,
-            reason:         FailureReason::Cancelled,
+            error: WorkflowError::Cancelled,
+            duration_ms: 0,
+            reason: FailureReason::Cancelled,
             git_commit_sha: None,
-            final_patch:    None,
-            diff_summary:   None,
+            final_patch: None,
+            diff_summary: None,
         },
     )
     .await
@@ -2607,34 +2654,34 @@ fn resolved_log_destination(state: &AppState) -> anyhow::Result<LogDestination> 
 
 fn runtime_question_from_interview_record(question: &InterviewQuestionRecord) -> Question {
     Question {
-        id:              question.id.clone(),
-        text:            question.text.clone(),
-        question_type:   question.question_type,
-        options:         question.options.clone(),
-        allow_freeform:  question.allow_freeform,
-        default:         None,
+        id: question.id.clone(),
+        text: question.text.clone(),
+        question_type: question.question_type,
+        options: question.options.clone(),
+        allow_freeform: question.allow_freeform,
+        default: None,
         timeout_seconds: question.timeout_seconds,
-        stage:           question.stage.clone(),
-        metadata:        HashMap::new(),
+        stage: question.stage.clone(),
+        metadata: HashMap::new(),
         context_display: question.context_display.clone(),
     }
 }
 
 fn api_question_from_interview_record(question: &InterviewQuestionRecord) -> ApiQuestion {
     ApiQuestion {
-        id:              question.id.clone(),
-        text:            question.text.clone(),
-        stage:           question.stage.clone(),
-        question_type:   question.question_type,
-        options:         question
+        id: question.id.clone(),
+        text: question.text.clone(),
+        stage: question.stage.clone(),
+        question_type: question.question_type,
+        options: question
             .options
             .iter()
             .map(|option| ApiQuestionOption {
-                key:   option.key.clone(),
+                key: option.key.clone(),
                 label: option.label.clone(),
             })
             .collect(),
-        allow_freeform:  question.allow_freeform,
+        allow_freeform: question.allow_freeform,
         timeout_seconds: question.timeout_seconds,
         context_display: question.context_display.clone(),
     }
@@ -2817,6 +2864,111 @@ fn answer_from_request(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum GateDecision {
+    Approve,
+    Reject,
+    Edit,
+}
+
+impl From<SlackGateDecision> for GateDecision {
+    fn from(value: SlackGateDecision) -> Self {
+        match value {
+            SlackGateDecision::Approve => Self::Approve,
+            SlackGateDecision::Reject => Self::Reject,
+            SlackGateDecision::Edit => Self::Edit,
+        }
+    }
+}
+
+#[allow(
+    clippy::result_large_err,
+    reason = "Gate decision parsing returns HTTP 400 responses directly."
+)]
+pub(super) fn answer_from_gate_decision(
+    decision: GateDecision,
+    payload: &serde_json::Value,
+    question: &InterviewQuestionRecord,
+) -> Result<Answer, Response> {
+    if matches!(decision, GateDecision::Edit) {
+        if let Some(text) = gate_payload_text(payload) {
+            if question.allow_freeform || question.question_type == QuestionType::Freeform {
+                return Ok(Answer::text(text));
+            }
+        }
+    }
+
+    match question.question_type {
+        QuestionType::YesNo | QuestionType::Confirmation => match decision {
+            GateDecision::Approve => Ok(Answer::yes()),
+            GateDecision::Reject => Ok(Answer::no()),
+            GateDecision::Edit => gate_option_answer(decision, question).ok_or_else(|| {
+                ApiError::bad_request(
+                    "Edit decisions require an editable/freeform gate or an edit option.",
+                )
+                .into_response()
+            }),
+        },
+        QuestionType::MultipleChoice | QuestionType::MultiSelect => {
+            gate_option_answer(decision, question).ok_or_else(|| {
+                ApiError::bad_request("Gate decision does not match any question option.")
+                    .into_response()
+            })
+        }
+        QuestionType::Freeform => gate_payload_text(payload).map(Answer::text).ok_or_else(|| {
+            ApiError::bad_request("Freeform gate decisions require payload.text.").into_response()
+        }),
+    }
+}
+
+fn gate_option_answer(
+    decision: GateDecision,
+    question: &InterviewQuestionRecord,
+) -> Option<Answer> {
+    let option = find_gate_decision_option(decision, &question.options)?;
+    match question.question_type {
+        QuestionType::MultiSelect => Some(Answer::multi_selected(vec![option.key.clone()])),
+        _ => Some(Answer::selected(option.key.clone(), option.clone())),
+    }
+}
+
+fn gate_payload_text(payload: &serde_json::Value) -> Option<String> {
+    payload
+        .get("text")
+        .or_else(|| payload.get("value"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
+fn find_gate_decision_option(
+    decision: GateDecision,
+    options: &[InterviewOption],
+) -> Option<&InterviewOption> {
+    let key_aliases: &[&str] = match decision {
+        GateDecision::Approve => &["A", "Y", "YES", "APPROVE"],
+        GateDecision::Reject => &["R", "N", "NO", "REJECT", "REVISE"],
+        GateDecision::Edit => &["E", "EDIT"],
+    };
+    let label_aliases: &[&str] = match decision {
+        GateDecision::Approve => &["approve", "approved", "yes", "continue"],
+        GateDecision::Reject => &["reject", "rejected", "revise", "revision", "no"],
+        GateDecision::Edit => &["edit"],
+    };
+
+    options.iter().find(|option| {
+        key_aliases
+            .iter()
+            .any(|alias| option.key.eq_ignore_ascii_case(alias))
+            || {
+                let label = option.label.to_ascii_lowercase();
+                label_aliases.iter().any(|alias| label.contains(alias))
+            }
+    })
+}
+
 /// Execute a single run: transitions queued → starting → running →
 /// completed/failed/cancelled.
 async fn execute_run(state: Arc<AppState>, run_id: RunId) {
@@ -2887,7 +3039,7 @@ async fn execute_run_in_process(state: Arc<AppState>, run_id: RunId) {
             if managed_run.status == RunStatus::Starting {
                 managed_run.status = RunStatus::Running;
                 managed_run.answer_transport = Some(RunAnswerTransport::InProcess {
-                    interviewer:  Arc::clone(&interviewer),
+                    interviewer: Arc::clone(&interviewer),
                     steering_hub: Arc::clone(&steering_hub),
                 });
                 false
@@ -3180,12 +3332,12 @@ async fn execute_run_subprocess(state: Arc<AppState>, run_id: RunId) {
                 &run_store,
                 &run_id,
                 &workflow_event::Event::WorkflowRunFailed {
-                    error:          WorkflowError::engine(err.to_string()),
-                    duration_ms:    0,
-                    reason:         FailureReason::LaunchFailed,
+                    error: WorkflowError::engine(err.to_string()),
+                    duration_ms: 0,
+                    reason: FailureReason::LaunchFailed,
                     git_commit_sha: None,
-                    final_patch:    None,
-                    diff_summary:   None,
+                    final_patch: None,
+                    diff_summary: None,
                 },
             )
             .await;
@@ -3208,12 +3360,12 @@ async fn execute_run_subprocess(state: Arc<AppState>, run_id: RunId) {
             &run_store,
             &run_id,
             &workflow_event::Event::WorkflowRunFailed {
-                error:          WorkflowError::engine(message.clone()),
-                duration_ms:    0,
-                reason:         FailureReason::LaunchFailed,
+                error: WorkflowError::engine(message.clone()),
+                duration_ms: 0,
+                reason: FailureReason::LaunchFailed,
                 git_commit_sha: None,
-                final_patch:    None,
-                diff_summary:   None,
+                final_patch: None,
+                diff_summary: None,
             },
         )
         .await;
@@ -3239,12 +3391,12 @@ async fn execute_run_subprocess(state: Arc<AppState>, run_id: RunId) {
             &run_store,
             &run_id,
             &workflow_event::Event::WorkflowRunFailed {
-                error:          WorkflowError::engine(message.clone()),
-                duration_ms:    0,
-                reason:         FailureReason::LaunchFailed,
+                error: WorkflowError::engine(message.clone()),
+                duration_ms: 0,
+                reason: FailureReason::LaunchFailed,
                 git_commit_sha: None,
-                final_patch:    None,
-                diff_summary:   None,
+                final_patch: None,
+                diff_summary: None,
             },
         )
         .await;
@@ -3261,12 +3413,12 @@ async fn execute_run_subprocess(state: Arc<AppState>, run_id: RunId) {
             &run_store,
             &run_id,
             &workflow_event::Event::WorkflowRunFailed {
-                error:          WorkflowError::engine(message.clone()),
-                duration_ms:    0,
-                reason:         FailureReason::LaunchFailed,
+                error: WorkflowError::engine(message.clone()),
+                duration_ms: 0,
+                reason: FailureReason::LaunchFailed,
                 git_commit_sha: None,
-                final_patch:    None,
-                diff_summary:   None,
+                final_patch: None,
+                diff_summary: None,
             },
         )
         .await;
@@ -3295,12 +3447,12 @@ async fn execute_run_subprocess(state: Arc<AppState>, run_id: RunId) {
                 &run_store,
                 &run_id,
                 &workflow_event::Event::WorkflowRunFailed {
-                    error:          WorkflowError::engine(err.to_string()),
-                    duration_ms:    0,
-                    reason:         FailureReason::Terminated,
+                    error: WorkflowError::engine(err.to_string()),
+                    duration_ms: 0,
+                    reason: FailureReason::Terminated,
                     git_commit_sha: None,
-                    final_patch:    None,
-                    diff_summary:   None,
+                    final_patch: None,
+                    diff_summary: None,
                 },
             )
             .await;

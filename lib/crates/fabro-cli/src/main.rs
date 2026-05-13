@@ -137,7 +137,7 @@ fn install_miette_hook() {
 }
 
 struct CliDiagnostic {
-    err:            anyhow::Error,
+    err: anyhow::Error,
     show_auth_hint: bool,
 }
 
@@ -754,9 +754,12 @@ destination = "{destination}"
             .block_on(pre_tracing_bootstrap(command))
             .expect("bootstrap should resolve");
 
-        assert_eq!(bootstrap.sink, logging::InternalLogSink::Server {
-            log: logging::LogSink::Stdout,
-        });
+        assert_eq!(
+            bootstrap.sink,
+            logging::InternalLogSink::Server {
+                log: logging::LogSink::Stdout,
+            }
+        );
         assert_eq!(bootstrap.config_log_level.as_deref(), Some("warn"));
         assert!(bootstrap.foreground_server_log_bootstrap.is_some());
     }
@@ -785,9 +788,12 @@ destination = "{destination}"
             .block_on(pre_tracing_bootstrap(command))
             .expect("bootstrap should resolve");
 
-        assert_eq!(bootstrap.sink, logging::InternalLogSink::Server {
-            log: logging::LogSink::Stdout,
-        });
+        assert_eq!(
+            bootstrap.sink,
+            logging::InternalLogSink::Server {
+                log: logging::LogSink::Stdout,
+            }
+        );
         assert_eq!(bootstrap.config_log_level.as_deref(), Some("warn"));
         assert!(bootstrap.foreground_server_log_bootstrap.is_some());
     }
@@ -816,9 +822,12 @@ destination = "{destination}"
             .block_on(pre_tracing_bootstrap(command))
             .expect("bootstrap should resolve");
 
-        assert_eq!(bootstrap.sink, logging::InternalLogSink::Server {
-            log: logging::LogSink::Stdout,
-        });
+        assert_eq!(
+            bootstrap.sink,
+            logging::InternalLogSink::Server {
+                log: logging::LogSink::Stdout,
+            }
+        );
         assert_eq!(bootstrap.config_log_level.as_deref(), Some("warn"));
         assert!(bootstrap.foreground_server_log_bootstrap.is_some());
     }
@@ -847,9 +856,12 @@ destination = "{destination}"
             .block_on(pre_tracing_bootstrap(command))
             .expect("bootstrap should resolve");
 
-        assert_eq!(bootstrap.sink, logging::InternalLogSink::Server {
-            log: logging::LogSink::File(storage_dir.path().join("logs").join("server.log")),
-        });
+        assert_eq!(
+            bootstrap.sink,
+            logging::InternalLogSink::Server {
+                log: logging::LogSink::File(storage_dir.path().join("logs").join("server.log")),
+            }
+        );
         assert_eq!(bootstrap.config_log_level.as_deref(), Some("warn"));
         assert!(bootstrap.foreground_server_log_bootstrap.is_some());
     }
@@ -876,9 +888,12 @@ destination = "{destination}"
             .block_on(pre_tracing_bootstrap(command))
             .expect("bootstrap should resolve");
 
-        assert_eq!(bootstrap.sink, logging::InternalLogSink::Server {
-            log: logging::LogSink::Stdout,
-        });
+        assert_eq!(
+            bootstrap.sink,
+            logging::InternalLogSink::Server {
+                log: logging::LogSink::Stdout,
+            }
+        );
         assert_eq!(bootstrap.config_log_level.as_deref(), Some("warn"));
         assert!(bootstrap.foreground_server_log_bootstrap.is_none());
     }
@@ -905,9 +920,12 @@ destination = "{destination}"
             .block_on(pre_tracing_bootstrap(command))
             .expect("bootstrap should resolve");
 
-        assert_eq!(bootstrap.sink, logging::InternalLogSink::Server {
-            log: logging::LogSink::File(storage_dir.path().join("logs").join("server.log")),
-        });
+        assert_eq!(
+            bootstrap.sink,
+            logging::InternalLogSink::Server {
+                log: logging::LogSink::File(storage_dir.path().join("logs").join("server.log")),
+            }
+        );
         assert_eq!(bootstrap.config_log_level.as_deref(), Some("warn"));
         assert!(bootstrap.foreground_server_log_bootstrap.is_none());
     }
@@ -937,9 +955,12 @@ destination = "{destination}"
                 .block_on(pre_tracing_bootstrap(command))
                 .expect("bootstrap should resolve");
 
-            assert_eq!(bootstrap.sink, logging::InternalLogSink::Server {
-                log: logging::LogSink::Stdout,
-            });
+            assert_eq!(
+                bootstrap.sink,
+                logging::InternalLogSink::Server {
+                    log: logging::LogSink::Stdout,
+                }
+            );
         });
     }
 
@@ -1050,12 +1071,15 @@ destination = "{destination}"
             .block_on(pre_tracing_bootstrap(command))
             .expect("bootstrap should resolve");
 
-        assert_eq!(bootstrap.sink, logging::InternalLogSink::Worker {
-            server_log:       logging::LogSink::File(
-                storage_dir.path().join("logs").join("server.log"),
-            ),
-            per_run_log_path: run_dir.path().join("runtime").join("server.log"),
-        });
+        assert_eq!(
+            bootstrap.sink,
+            logging::InternalLogSink::Worker {
+                server_log: logging::LogSink::File(
+                    storage_dir.path().join("logs").join("server.log"),
+                ),
+                per_run_log_path: run_dir.path().join("runtime").join("server.log"),
+            }
+        );
         assert!(bootstrap.config_log_level.is_none());
         assert!(bootstrap.foreground_server_log_bootstrap.is_none());
     }
@@ -1086,10 +1110,13 @@ destination = "{destination}"
                 .block_on(pre_tracing_bootstrap(command))
                 .expect("bootstrap should resolve");
 
-            assert_eq!(bootstrap.sink, logging::InternalLogSink::Worker {
-                server_log:       logging::LogSink::Stdout,
-                per_run_log_path: run_dir.path().join("runtime").join("server.log"),
-            });
+            assert_eq!(
+                bootstrap.sink,
+                logging::InternalLogSink::Worker {
+                    server_log: logging::LogSink::Stdout,
+                    per_run_log_path: run_dir.path().join("runtime").join("server.log"),
+                }
+            );
         });
     }
 

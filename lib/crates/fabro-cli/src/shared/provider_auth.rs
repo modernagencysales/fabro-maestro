@@ -41,6 +41,7 @@ pub(crate) fn provider_key_url(provider: Provider) -> &'static str {
             "https://platform.minimaxi.com/user-center/basic-information/interface-key"
         }
         Provider::Inception => "https://console.inceptionlabs.ai/api-keys",
+        Provider::OpenRouter => "https://openrouter.ai/settings/keys",
         Provider::OpenAiCompatible => "",
     }
 }

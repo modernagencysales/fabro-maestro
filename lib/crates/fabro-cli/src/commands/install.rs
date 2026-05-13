@@ -268,7 +268,7 @@ enum GitHubInstallSelection {
         token: String,
     },
     App {
-        owner:    GitHubAppOwner,
+        owner: GitHubAppOwner,
         username: Option<String>,
     },
 }
@@ -625,11 +625,9 @@ impl InstallInputSource for NonInteractiveInstallInputSource {
                 Ok(GitHubInstallSelection::Token { token })
             }
             Some(InstallGitHubStrategyArg::App) => Ok(GitHubInstallSelection::App {
-                owner:    GitHubAppOwner::parse_scripted(
-                    self.args.github_owner.as_deref().context(
-                        "non-interactive install requires --github-owner for --github-strategy app",
-                    )?,
-                )?,
+                owner: GitHubAppOwner::parse_scripted(self.args.github_owner.as_deref().context(
+                    "non-interactive install requires --github-owner for --github-strategy app",
+                )?)?,
                 username: best_effort_github_username().await,
             }),
             None => bail!("non-interactive install requires --github-strategy"),
@@ -711,7 +709,7 @@ async fn choose_install_github_selection(
             Ok(GitHubInstallSelection::Token { token })
         }
         Some(InstallGitHubStrategyArg::App) => Ok(GitHubInstallSelection::App {
-            owner:    GitHubAppOwner::parse_scripted(github_args.owner.as_deref().context(
+            owner: GitHubAppOwner::parse_scripted(github_args.owner.as_deref().context(
                 "install github --non-interactive requires --owner for --strategy app",
             )?)?,
             username: best_effort_github_username().await,
@@ -867,8 +865,8 @@ fn build_github_app_manifest(app_name: &str, port: u16, web_url: &str) -> serde_
 /// Run the GitHub App manifest registration flow via a temporary local server.
 /// Returns the app metadata and secret pairs to persist for the local server.
 struct GitHubAppRegistration {
-    app_id:    String,
-    slug:      String,
+    app_id: String,
+    slug: String,
     client_id: String,
     env_pairs: Vec<(String, String)>,
 }
@@ -876,9 +874,9 @@ struct GitHubAppRegistration {
 enum PendingGitHubSettings {
     Token,
     App {
-        app_id:            String,
-        slug:              String,
-        client_id:         String,
+        app_id: String,
+        slug: String,
+        client_id: String,
         allowed_usernames: Vec<String>,
     },
 }
@@ -1094,9 +1092,9 @@ async fn persist_vault_secrets_via_server(
     for secret in secrets {
         client
             .create_secret(CreateSecretRequest {
-                name:        secret.name.clone(),
-                value:       secret.value.clone(),
-                type_:       secret.type_,
+                name: secret.name.clone(),
+                value: secret.value.clone(),
+                type_: secret.type_,
                 description: secret.description.clone(),
             })
             .await?;
@@ -1134,9 +1132,9 @@ async fn persist_vault_secrets_with(
 
 fn credential_secret_request(credential: &AuthCredential) -> Result<CreateSecretRequest> {
     Ok(CreateSecretRequest {
-        name:        credential_id_for(credential).map_err(anyhow::Error::msg)?,
-        value:       serde_json::to_string(credential)?,
-        type_:       ApiSecretType::Credential,
+        name: credential_id_for(credential).map_err(anyhow::Error::msg)?,
+        value: serde_json::to_string(credential)?,
+        type_: ApiSecretType::Credential,
         description: None,
     })
 }
@@ -1145,8 +1143,8 @@ fn server_env_updates(secrets: &[(String, String)]) -> Vec<envfile::EnvFileUpdat
     secrets
         .iter()
         .map(|(key, value)| envfile::EnvFileUpdate {
-            key:     key.clone(),
-            value:   value.clone(),
+            key: key.clone(),
+            value: value.clone(),
             comment: None,
         })
         .collect()
@@ -1155,7 +1153,7 @@ fn server_env_updates(secrets: &[(String, String)]) -> Vec<envfile::EnvFileUpdat
 fn server_env_removals(keys: &[&'static str]) -> Vec<envfile::EnvFileRemoval> {
     keys.iter()
         .map(|key| envfile::EnvFileRemoval {
-            key:     (*key).to_string(),
+            key: (*key).to_string(),
             comment: None,
         })
         .collect()
@@ -1183,11 +1181,11 @@ async fn persist_install_outputs(
 }
 
 struct PendingGitHubInstallWrite<'a> {
-    settings_write:    PendingSettingsWrite<'a>,
-    server_env_set:    Vec<(String, String)>,
+    settings_write: PendingSettingsWrite<'a>,
+    server_env_set: Vec<(String, String)>,
     server_env_remove: Vec<&'static str>,
-    vault_set:         Vec<(String, String)>,
-    vault_remove:      Vec<&'static str>,
+    vault_set: Vec<(String, String)>,
+    vault_remove: Vec<&'static str>,
 }
 
 fn restore_optional_file(path: &Path, previous_contents: Option<&str>) -> Result<()> {
@@ -1526,17 +1524,20 @@ async fn run_install_github_inner(
     }
 
     let settings_toml = toml::to_string_pretty(&doc)?;
-    persist_github_install_changes(&storage_dir, &PendingGitHubInstallWrite {
-        settings_write: PendingSettingsWrite {
-            path:              &config_path,
-            contents:          settings_toml.as_str(),
-            previous_contents: Some(existing_config_contents.as_str()),
+    persist_github_install_changes(
+        &storage_dir,
+        &PendingGitHubInstallWrite {
+            settings_write: PendingSettingsWrite {
+                path: &config_path,
+                contents: settings_toml.as_str(),
+                previous_contents: Some(existing_config_contents.as_str()),
+            },
+            server_env_set,
+            server_env_remove,
+            vault_set,
+            vault_remove,
         },
-        server_env_set,
-        server_env_remove,
-        vault_set,
-        vault_remove,
-    })?;
+    )?;
 
     if let Some(restart_outcome) =
         maybe_restart_server_after_github_install(&storage_dir, &config_path, server_was_running)
@@ -1676,9 +1677,9 @@ async fn run_install_inner(args: &InstallArgs, ctx: &CommandContext) -> Result<(
                 s.green.apply_to("✔")
             );
             vault_secrets.push(CreateSecretRequest {
-                name:        "GITHUB_TOKEN".to_string(),
-                value:       token,
-                type_:       ApiSecretType::Environment,
+                name: "GITHUB_TOKEN".to_string(),
+                value: token,
+                type_: ApiSecretType::Environment,
                 description: None,
             });
             Some(PendingGitHubSettings::Token)
@@ -1709,9 +1710,9 @@ async fn run_install_inner(args: &InstallArgs, ctx: &CommandContext) -> Result<(
             );
             server_env_pairs.extend(registration.env_pairs.iter().cloned());
             Some(PendingGitHubSettings::App {
-                app_id:            registration.app_id,
-                slug:              registration.slug,
-                client_id:         registration.client_id,
+                app_id: registration.app_id,
+                slug: registration.slug,
+                client_id: registration.client_id,
                 allowed_usernames: vec![allowed_username],
             })
         }
@@ -1816,8 +1817,8 @@ async fn run_install_inner(args: &InstallArgs, ctx: &CommandContext) -> Result<(
         &server_env_pairs,
         &vault_secrets,
         Some(PendingSettingsWrite {
-            path:              &config_path,
-            contents:          settings_toml.as_str(),
+            path: &config_path,
+            contents: settings_toml.as_str(),
             previous_contents: existing_config_contents.as_deref(),
         }),
         server_was_running,
@@ -1911,7 +1912,7 @@ async fn run_install_inner(args: &InstallArgs, ctx: &CommandContext) -> Result<(
         || async {
             fabro_util::printerr!(printer, "");
             let doctor_args = DoctorArgs {
-                target:  ServerTargetArgs::default(),
+                target: ServerTargetArgs::default(),
                 verbose: false,
             };
             doctor::run_doctor(&doctor_args, ctx).await
@@ -2007,9 +2008,10 @@ mod tests {
         let cfg = fabro_config::ServerSettingsBuilder::from_toml(&toml_str)
             .expect("generated config should resolve");
         let methods = cfg.server.auth.methods;
-        assert_eq!(methods, vec![
-            fabro_types::settings::ServerAuthMethod::DevToken
-        ]);
+        assert_eq!(
+            methods,
+            vec![fabro_types::settings::ServerAuthMethod::DevToken]
+        );
     }
 
     #[test]
@@ -2017,9 +2019,10 @@ mod tests {
         let toml_str = format_config_toml();
         let cfg = fabro_config::ServerSettingsBuilder::from_toml(&toml_str)
             .expect("generated config should resolve");
-        assert_eq!(cfg.server.auth.methods, vec![
-            fabro_types::settings::ServerAuthMethod::DevToken
-        ]);
+        assert_eq!(
+            cfg.server.auth.methods,
+            vec![fabro_types::settings::ServerAuthMethod::DevToken]
+        );
     }
 
     #[test]
@@ -2273,9 +2276,13 @@ client_id = "client-id"
         let mut doc = toml::Value::Table(toml::Table::default());
         merge_server_settings(&mut doc, &default_web_url()).unwrap();
 
-        write_github_app_settings(&mut doc, "123", "fabro-app", "client-id", &[
-            "brynary".to_string()
-        ])
+        write_github_app_settings(
+            &mut doc,
+            "123",
+            "fabro-app",
+            "client-id",
+            &["brynary".to_string()],
+        )
         .unwrap();
 
         let github = doc
@@ -2460,14 +2467,14 @@ client_id = "client-id"
         let server_env_pairs = [("SESSION_SECRET".to_string(), "session".to_string())];
         let vault_secrets = [
             CreateSecretRequest {
-                name:        "GITHUB_TOKEN".to_string(),
-                value:       "gh-token".to_string(),
-                type_:       ApiSecretType::Environment,
+                name: "GITHUB_TOKEN".to_string(),
+                value: "gh-token".to_string(),
+                type_: ApiSecretType::Environment,
                 description: None,
             },
             credential_secret_request(&AuthCredential {
                 provider: Provider::Anthropic,
-                details:  fabro_auth::AuthDetails::ApiKey {
+                details: fabro_auth::AuthDetails::ApiKey {
                     key: "anthropic-key".to_string(),
                 },
             })
@@ -2529,9 +2536,9 @@ client_id = "client-id"
     async fn persist_vault_secrets_with_leaves_running_server_up() {
         let dir = tempfile::tempdir().unwrap();
         let vault_secrets = [CreateSecretRequest {
-            name:        "GITHUB_TOKEN".to_string(),
-            value:       "gh-token".to_string(),
-            type_:       ApiSecretType::Environment,
+            name: "GITHUB_TOKEN".to_string(),
+            value: "gh-token".to_string(),
+            type_: ApiSecretType::Environment,
             description: None,
         }];
         let server = MockServer::start_async().await;
@@ -2740,9 +2747,9 @@ client_id = "client-id"
         let dir = tempfile::tempdir().unwrap();
         let server_env_pairs = [("SESSION_SECRET".to_string(), "session".to_string())];
         let vault_secrets = [CreateSecretRequest {
-            name:        "GITHUB_CLI_TOKEN".to_string(),
-            value:       "gh-token".to_string(),
-            type_:       ApiSecretType::Environment,
+            name: "GITHUB_CLI_TOKEN".to_string(),
+            value: "gh-token".to_string(),
+            type_: ApiSecretType::Environment,
             description: None,
         }];
         let settings_path = dir.path().join(SETTINGS_CONFIG_FILENAME);
@@ -2753,8 +2760,8 @@ client_id = "client-id"
             &server_env_pairs,
             &vault_secrets,
             Some(PendingSettingsWrite {
-                path:              &settings_path,
-                contents:          "_version = 1\n",
+                path: &settings_path,
+                contents: "_version = 1\n",
                 previous_contents: None,
             }),
             false,
@@ -2788,9 +2795,9 @@ client_id = "client-id"
         let dir = tempfile::tempdir().unwrap();
         let server_env_pairs = [("SESSION_SECRET".to_string(), "session".to_string())];
         let vault_secrets = [CreateSecretRequest {
-            name:        "GITHUB_CLI_TOKEN".to_string(),
-            value:       "gh-token".to_string(),
-            type_:       ApiSecretType::Environment,
+            name: "GITHUB_CLI_TOKEN".to_string(),
+            value: "gh-token".to_string(),
+            type_: ApiSecretType::Environment,
             description: None,
         }];
         let settings_path = dir.path().join(SETTINGS_CONFIG_FILENAME);
@@ -2801,8 +2808,8 @@ client_id = "client-id"
             &server_env_pairs,
             &vault_secrets,
             Some(PendingSettingsWrite {
-                path:              &settings_path,
-                contents:          "_version = 1\n[server]\nfoo = \"bar\"\n",
+                path: &settings_path,
+                contents: "_version = 1\n[server]\nfoo = \"bar\"\n",
                 previous_contents: Some("_version = 1\n[server]\n"),
             }),
             false,
@@ -2846,21 +2853,24 @@ client_id = "client-id"
         let settings_path = dir.path().join(SETTINGS_CONFIG_FILENAME);
         std::fs::write(&settings_path, "before").unwrap();
 
-        persist_github_install_changes(dir.path(), &PendingGitHubInstallWrite {
-            settings_write:    PendingSettingsWrite {
-                path:              &settings_path,
-                contents:          "after",
-                previous_contents: Some("before"),
+        persist_github_install_changes(
+            dir.path(),
+            &PendingGitHubInstallWrite {
+                settings_write: PendingSettingsWrite {
+                    path: &settings_path,
+                    contents: "after",
+                    previous_contents: Some("before"),
+                },
+                server_env_set: Vec::new(),
+                server_env_remove: vec![
+                    GITHUB_APP_PRIVATE_KEY_KEY,
+                    GITHUB_APP_CLIENT_SECRET_KEY,
+                    GITHUB_APP_WEBHOOK_SECRET_KEY,
+                ],
+                vault_set: vec![(GITHUB_TOKEN_SECRET_KEY.to_string(), "token".to_string())],
+                vault_remove: Vec::new(),
             },
-            server_env_set:    Vec::new(),
-            server_env_remove: vec![
-                GITHUB_APP_PRIVATE_KEY_KEY,
-                GITHUB_APP_CLIENT_SECRET_KEY,
-                GITHUB_APP_WEBHOOK_SECRET_KEY,
-            ],
-            vault_set:         vec![(GITHUB_TOKEN_SECRET_KEY.to_string(), "token".to_string())],
-            vault_remove:      Vec::new(),
-        })
+        )
         .unwrap();
 
         let server_env = envfile::read_env_file(&server_env_path).unwrap();
@@ -2904,30 +2914,33 @@ client_id = "client-id"
         let settings_path = dir.path().join(SETTINGS_CONFIG_FILENAME);
         std::fs::write(&settings_path, "before").unwrap();
 
-        persist_github_install_changes(dir.path(), &PendingGitHubInstallWrite {
-            settings_write:    PendingSettingsWrite {
-                path:              &settings_path,
-                contents:          "after",
-                previous_contents: Some("before"),
+        persist_github_install_changes(
+            dir.path(),
+            &PendingGitHubInstallWrite {
+                settings_write: PendingSettingsWrite {
+                    path: &settings_path,
+                    contents: "after",
+                    previous_contents: Some("before"),
+                },
+                server_env_set: vec![
+                    (
+                        GITHUB_APP_PRIVATE_KEY_KEY.to_string(),
+                        "private".to_string(),
+                    ),
+                    (
+                        GITHUB_APP_CLIENT_SECRET_KEY.to_string(),
+                        "client".to_string(),
+                    ),
+                ],
+                server_env_remove: vec![
+                    GITHUB_APP_PRIVATE_KEY_KEY,
+                    GITHUB_APP_CLIENT_SECRET_KEY,
+                    GITHUB_APP_WEBHOOK_SECRET_KEY,
+                ],
+                vault_set: Vec::new(),
+                vault_remove: vec![GITHUB_TOKEN_SECRET_KEY],
             },
-            server_env_set:    vec![
-                (
-                    GITHUB_APP_PRIVATE_KEY_KEY.to_string(),
-                    "private".to_string(),
-                ),
-                (
-                    GITHUB_APP_CLIENT_SECRET_KEY.to_string(),
-                    "client".to_string(),
-                ),
-            ],
-            server_env_remove: vec![
-                GITHUB_APP_PRIVATE_KEY_KEY,
-                GITHUB_APP_CLIENT_SECRET_KEY,
-                GITHUB_APP_WEBHOOK_SECRET_KEY,
-            ],
-            vault_set:         Vec::new(),
-            vault_remove:      vec![GITHUB_TOKEN_SECRET_KEY],
-        })
+        )
         .unwrap();
 
         let server_env = envfile::read_env_file(&server_env_path).unwrap();
@@ -2998,10 +3011,13 @@ root = "{}"
 
     #[test]
     fn non_interactive_source_rejects_hidden_args_without_switch() {
-        let args = install_args(false, InstallNonInteractiveArgs {
-            llm_provider: Some(Provider::Anthropic),
-            ..InstallNonInteractiveArgs::default()
-        });
+        let args = install_args(
+            false,
+            InstallNonInteractiveArgs {
+                llm_provider: Some(Provider::Anthropic),
+                ..InstallNonInteractiveArgs::default()
+            },
+        );
         let err = NonInteractiveInstallInputSource::new(&args).unwrap_err();
         assert!(
             err.to_string()
@@ -3011,14 +3027,17 @@ root = "{}"
 
     #[test]
     fn non_interactive_source_rejects_conflicting_api_key_inputs() {
-        let args = install_args(true, InstallNonInteractiveArgs {
-            llm_provider: Some(Provider::Anthropic),
-            llm_api_key_stdin: true,
-            llm_api_key_env: Some("ANTHROPIC_API_KEY".to_string()),
-            github_strategy: Some(InstallGitHubStrategyArg::Token),
-            github_username: Some("brynary".to_string()),
-            ..InstallNonInteractiveArgs::default()
-        });
+        let args = install_args(
+            true,
+            InstallNonInteractiveArgs {
+                llm_provider: Some(Provider::Anthropic),
+                llm_api_key_stdin: true,
+                llm_api_key_env: Some("ANTHROPIC_API_KEY".to_string()),
+                github_strategy: Some(InstallGitHubStrategyArg::Token),
+                github_username: Some("brynary".to_string()),
+                ..InstallNonInteractiveArgs::default()
+            },
+        );
         let err = NonInteractiveInstallInputSource::new(&args).unwrap_err();
         assert!(
             err.to_string()
@@ -3191,7 +3210,7 @@ root = "{}"
         let err = validate_install_github_non_interactive(
             &InstallGithubArgs {
                 strategy: Some(InstallGitHubStrategyArg::Token),
-                owner:    Some("personal".to_string()),
+                owner: Some("personal".to_string()),
             },
             true,
         )
@@ -3208,7 +3227,7 @@ root = "{}"
         let err = validate_install_github_non_interactive(
             &InstallGithubArgs {
                 strategy: Some(InstallGitHubStrategyArg::App),
-                owner:    None,
+                owner: None,
             },
             true,
         )

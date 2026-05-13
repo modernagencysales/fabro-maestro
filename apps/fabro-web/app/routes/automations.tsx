@@ -154,9 +154,9 @@ function WorkflowCard({ workflow }: { workflow: Workflow }) {
         </div>
 
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-fg-2 group-hover:text-fg">{workflow.name}</span>
-            <span className="font-mono text-xs text-fg-muted">{workflow.filename}</span>
+          <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+            <span className="truncate text-sm font-medium text-fg-2 group-hover:text-fg">{workflow.name}</span>
+            <span className="truncate font-mono text-xs text-fg-muted">{workflow.filename}</span>
             {workflow.schedule && (
               <span className="inline-flex items-center gap-1 rounded-full bg-teal-500/10 border border-teal-500/20 px-2 py-0.5 text-[11px] font-medium text-teal-300">
                 <ClockIcon className="size-3" />

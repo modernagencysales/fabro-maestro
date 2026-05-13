@@ -26,8 +26,8 @@ use crate::sleep_inhibitor;
 use crate::{server_client, user_config};
 
 struct AuthenticatedFabroServerAdapter {
-    client:        server_client::Client,
-    base_url:      String,
+    client: server_client::Client,
+    base_url: String,
     provider_name: String,
 }
 
@@ -44,16 +44,16 @@ impl AuthenticatedFabroServerAdapter {
 
 #[derive(Deserialize)]
 struct ServerCompletionResponse {
-    id:          String,
-    model:       String,
-    message:     Message,
+    id: String,
+    model: String,
+    message: Message,
     stop_reason: String,
-    usage:       ServerUsage,
+    usage: ServerUsage,
 }
 
 #[derive(Deserialize)]
 struct ServerUsage {
-    input_tokens:  i64,
+    input_tokens: i64,
     output_tokens: i64,
 }
 
@@ -113,7 +113,7 @@ fn transport_error(provider: &str, err: &anyhow::Error) -> LlmError {
     let message = err.to_string();
     if exit::exit_class_for(err) == Some(ExitClass::AuthRequired) {
         return LlmError::Provider {
-            kind:   ProviderErrorKind::Authentication,
+            kind: ProviderErrorKind::Authentication,
             detail: Box::new(ProviderErrorDetail {
                 message,
                 provider: provider.to_string(),
@@ -211,19 +211,19 @@ impl ProviderAdapter for AuthenticatedFabroServerAdapter {
             })?;
 
         Ok(LlmResponse {
-            id:            server_response.id,
-            model:         server_response.model,
-            provider:      self.provider_name.clone(),
-            message:       server_response.message,
+            id: server_response.id,
+            model: server_response.model,
+            provider: self.provider_name.clone(),
+            message: server_response.message,
             finish_reason: map_stop_reason(&server_response.stop_reason),
-            usage:         TokenCounts {
+            usage: TokenCounts {
                 input_tokens: server_response.usage.input_tokens,
                 output_tokens: server_response.usage.output_tokens,
                 ..Default::default()
             },
-            raw:           None,
-            warnings:      vec![],
-            rate_limit:    None,
+            raw: None,
+            warnings: vec![],
+            rate_limit: None,
         })
     }
 

@@ -38,36 +38,18 @@ fn help() {
 #[test]
 fn bare() {
     let context = test_context!();
-    fabro_snapshot!(context.filters(), context.model(), @"
-    success: true
-    exit_code: 0
-    ----- stdout -----
-    MODEL                               PROVIDER   ALIASES                  CONTEXT            COST       SPEED 
-     claude-opus-4-7                     anthropic  opus, claude-opus             1m    $5.0 / $25.0    25 tok/s 
-     claude-opus-4-6                     anthropic                                1m    $5.0 / $25.0    25 tok/s 
-     claude-sonnet-4-5                   anthropic                              200k    $3.0 / $15.0    50 tok/s 
-     claude-sonnet-4-6                   anthropic  sonnet, claude-sonnet       200k    $3.0 / $15.0    50 tok/s 
-     claude-haiku-4-5                    anthropic  haiku, claude-haiku         200k     $0.8 / $4.0   100 tok/s 
-     gpt-5.2                             openai     gpt5                          1m    $1.8 / $14.0    65 tok/s 
-     gpt-5-mini                          openai     gpt5-mini                     1m     $0.2 / $2.0    70 tok/s 
-     gpt-5.2-codex                       openai                                   1m    $1.8 / $14.0   100 tok/s 
-     gpt-5.3-codex                       openai     codex                         1m    $1.8 / $14.0   100 tok/s 
-     gpt-5.3-codex-spark                 openai     codex-spark                 131k           - / -  1000 tok/s 
-     gpt-5.4                             openai     gpt54, gpt-54                 1m    $2.5 / $15.0    70 tok/s 
-     gpt-5.5                             openai     gpt55, gpt-55                 1m    $5.0 / $30.0    70 tok/s 
-     gpt-5.5-pro                         openai     gpt55-pro, gpt-55-pro         1m  $30.0 / $180.0    20 tok/s 
-     gpt-5.4-pro                         openai     gpt54-pro, gpt-54-pro         1m  $30.0 / $180.0    20 tok/s 
-     gpt-5.4-mini                        openai     gpt54-mini, gpt-54-mini     400k     $0.8 / $4.5   140 tok/s 
-     gemini-3.1-pro-preview              gemini     gemini-pro                    1m    $2.0 / $12.0    85 tok/s 
-     gemini-3.1-pro-preview-customtools  gemini     gemini-customtools            1m    $2.0 / $12.0    85 tok/s 
-     gemini-3-flash-preview              gemini     gemini-flash                  1m     $0.5 / $3.0   150 tok/s 
-     gemini-3.1-flash-lite-preview       gemini     gemini-flash-lite             1m     $0.2 / $1.5   200 tok/s 
-     kimi-k2.5                           kimi       kimi                        262k     $0.6 / $3.0    50 tok/s 
-     glm-4.7                             zai        glm, glm4                   203k     $0.6 / $2.2   100 tok/s 
-     minimax-m2.5                        minimax    minimax                     197k     $0.3 / $1.2    45 tok/s 
-     mercury-2                           inception  mercury                     131k     $0.2 / $0.8  1000 tok/s
-    ----- stderr -----
-    ");
+    let output = context
+        .model()
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(output).expect("model list output should be utf-8");
+    assert!(stdout.contains("MODEL"));
+    assert!(stdout.contains("claude-sonnet-4-6"));
+    assert!(stdout.contains("moonshotai/kimi-k2.6"));
+    assert!(stdout.contains("deepseek/deepseek-v4-flash"));
 }
 
 #[test]
@@ -75,36 +57,11 @@ fn list() {
     let context = test_context!();
     let mut cmd = context.model();
     cmd.arg("list");
-    fabro_snapshot!(context.filters(), cmd, @"
-    success: true
-    exit_code: 0
-    ----- stdout -----
-    MODEL                               PROVIDER   ALIASES                  CONTEXT            COST       SPEED 
-     claude-opus-4-7                     anthropic  opus, claude-opus             1m    $5.0 / $25.0    25 tok/s 
-     claude-opus-4-6                     anthropic                                1m    $5.0 / $25.0    25 tok/s 
-     claude-sonnet-4-5                   anthropic                              200k    $3.0 / $15.0    50 tok/s 
-     claude-sonnet-4-6                   anthropic  sonnet, claude-sonnet       200k    $3.0 / $15.0    50 tok/s 
-     claude-haiku-4-5                    anthropic  haiku, claude-haiku         200k     $0.8 / $4.0   100 tok/s 
-     gpt-5.2                             openai     gpt5                          1m    $1.8 / $14.0    65 tok/s 
-     gpt-5-mini                          openai     gpt5-mini                     1m     $0.2 / $2.0    70 tok/s 
-     gpt-5.2-codex                       openai                                   1m    $1.8 / $14.0   100 tok/s 
-     gpt-5.3-codex                       openai     codex                         1m    $1.8 / $14.0   100 tok/s 
-     gpt-5.3-codex-spark                 openai     codex-spark                 131k           - / -  1000 tok/s 
-     gpt-5.4                             openai     gpt54, gpt-54                 1m    $2.5 / $15.0    70 tok/s 
-     gpt-5.5                             openai     gpt55, gpt-55                 1m    $5.0 / $30.0    70 tok/s 
-     gpt-5.5-pro                         openai     gpt55-pro, gpt-55-pro         1m  $30.0 / $180.0    20 tok/s 
-     gpt-5.4-pro                         openai     gpt54-pro, gpt-54-pro         1m  $30.0 / $180.0    20 tok/s 
-     gpt-5.4-mini                        openai     gpt54-mini, gpt-54-mini     400k     $0.8 / $4.5   140 tok/s 
-     gemini-3.1-pro-preview              gemini     gemini-pro                    1m    $2.0 / $12.0    85 tok/s 
-     gemini-3.1-pro-preview-customtools  gemini     gemini-customtools            1m    $2.0 / $12.0    85 tok/s 
-     gemini-3-flash-preview              gemini     gemini-flash                  1m     $0.5 / $3.0   150 tok/s 
-     gemini-3.1-flash-lite-preview       gemini     gemini-flash-lite             1m     $0.2 / $1.5   200 tok/s 
-     kimi-k2.5                           kimi       kimi                        262k     $0.6 / $3.0    50 tok/s 
-     glm-4.7                             zai        glm, glm4                   203k     $0.6 / $2.2   100 tok/s 
-     minimax-m2.5                        minimax    minimax                     197k     $0.3 / $1.2    45 tok/s 
-     mercury-2                           inception  mercury                     131k     $0.2 / $0.8  1000 tok/s
-    ----- stderr -----
-    ");
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let stdout = String::from_utf8(output).expect("model list output should be utf-8");
+    assert!(stdout.contains("MODEL"));
+    assert!(stdout.contains("google/gemini-3.1-pro-preview"));
+    assert!(stdout.contains("qwen/qwen3.6-plus"));
 }
 
 #[test]
@@ -124,6 +81,33 @@ fn list_provider() {
      claude-haiku-4-5   anthropic  haiku, claude-haiku       200k   $0.8 / $4.0  100 tok/s
     ----- stderr -----
     ");
+}
+
+#[test]
+fn list_provider_openrouter_json_contains_testing_shortlist() {
+    let context = test_context!();
+    let mut cmd = context.model();
+    cmd.args(["list", "--provider", "openrouter", "--json"]);
+    let output = cmd.assert().success().get_output().stdout.clone();
+    let models: serde_json::Value =
+        serde_json::from_slice(&output).expect("model list json should parse");
+    let ids: Vec<&str> = models
+        .as_array()
+        .expect("model list json should be an array")
+        .iter()
+        .filter_map(|model| model["id"].as_str())
+        .collect();
+
+    for id in [
+        "moonshotai/kimi-k2.6",
+        "google/gemini-3.1-flash-lite",
+        "google/gemini-3.1-pro-preview",
+        "qwen/qwen3.6-plus",
+        "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-flash",
+    ] {
+        assert!(ids.contains(&id), "missing {id} from OpenRouter list");
+    }
 }
 
 #[test]

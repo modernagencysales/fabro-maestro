@@ -64,6 +64,7 @@ impl AgentCli {
             | Provider::Zai
             | Provider::Minimax
             | Provider::Inception
+            | Provider::OpenRouter
             | Provider::OpenAiCompatible => Self::Codex,
         }
     }
@@ -136,6 +137,7 @@ pub fn cli_command_for_provider(provider: Provider, model: &str, prompt_file: &s
             | Provider::Zai
             | Provider::Minimax
             | Provider::Inception
+            | Provider::OpenRouter
             | Provider::OpenAiCompatible => {
                 format!(" -m {model}")
             }
@@ -152,6 +154,7 @@ pub fn cli_command_for_provider(provider: Provider, model: &str, prompt_file: &s
         | Provider::Zai
         | Provider::Minimax
         | Provider::Inception
+        | Provider::OpenRouter
         | Provider::OpenAiCompatible => {
             format!("cat {prompt_file} | codex exec --json --full-auto{model_flag}")
         }
@@ -169,8 +172,8 @@ pub fn cli_command_for_provider(provider: Provider, model: &str, prompt_file: &s
 /// Parsed response from a CLI tool invocation.
 #[derive(Debug)]
 pub struct CliResponse {
-    pub text:          String,
-    pub input_tokens:  i64,
+    pub text: String,
+    pub input_tokens: i64,
     pub output_tokens: i64,
 }
 
@@ -321,6 +324,7 @@ pub fn parse_cli_response(provider: Provider, output: &str) -> Option<CliRespons
         | Provider::Zai
         | Provider::Minimax
         | Provider::Inception
+        | Provider::OpenRouter
         | Provider::OpenAiCompatible => parse_codex_ndjson(output),
         Provider::Gemini => parse_gemini_json(output),
         Provider::Anthropic => parse_claude_ndjson(output),
@@ -416,12 +420,12 @@ impl CodergenBackend for AgentCliBackend {
         let stage_scope = StageScope::for_handler(context, &node.id);
         emitter.emit_scoped(
             &Event::AgentCliStarted {
-                node_id:  node.id.clone(),
-                visit:    stage_scope.visit,
-                mode:     "cli".to_string(),
+                node_id: node.id.clone(),
+                visit: stage_scope.visit,
+                mode: "cli".to_string(),
                 provider: provider.to_string(),
-                model:    model.to_string(),
-                command:  command.clone(),
+                model: model.to_string(),
+                command: command.clone(),
             },
             &stage_scope,
         );
@@ -622,12 +626,16 @@ impl CodergenBackend for AgentCliBackend {
         let (files_touched, last_file_touched) =
             changed_files::files_touched_since(sandbox, &files_before).await;
 
-        let stage_usage =
-            billed_model_usage_from_llm(model, provider, node.speed(), &TokenCounts {
+        let stage_usage = billed_model_usage_from_llm(
+            model,
+            provider,
+            node.speed(),
+            &TokenCounts {
                 input_tokens: parsed.input_tokens,
                 output_tokens: parsed.output_tokens,
                 ..TokenCounts::default()
-            });
+            },
+        );
 
         Ok(CodergenResult::Text {
             text: parsed.text,
@@ -748,7 +756,7 @@ mod tests {
 
     /// Mock sandbox that returns pre-configured ExecResults in FIFO order.
     struct CliMockSandbox {
-        results:  Mutex<VecDeque<ExecResult>>,
+        results: Mutex<VecDeque<ExecResult>>,
         commands: Arc<Mutex<Vec<String>>>,
     }
 
@@ -853,10 +861,10 @@ mod tests {
 
     fn ok_result() -> ExecResult {
         ExecResult {
-            exit_code:   Some(0),
+            exit_code: Some(0),
             termination: CommandTermination::Exited,
-            stdout:      String::new(),
-            stderr:      String::new(),
+            stdout: String::new(),
+            stderr: String::new(),
             duration_ms: 10,
         }
     }
@@ -867,10 +875,10 @@ mod tests {
 
     fn fail_result_with_output(code: i32, stdout: &str, stderr: &str) -> ExecResult {
         ExecResult {
-            exit_code:   Some(code),
+            exit_code: Some(code),
             termination: CommandTermination::Exited,
-            stdout:      stdout.to_string(),
-            stderr:      stderr.to_string(),
+            stdout: stdout.to_string(),
+            stderr: stderr.to_string(),
             duration_ms: 10,
         }
     }
@@ -1172,13 +1180,13 @@ mod tests {
         let stage_scope = StageScope::for_handler(&context, "test");
         let result = router
             .one_shot(OneShotRequest {
-                node:          &node,
-                prompt:        "prompt",
+                node: &node,
+                prompt: "prompt",
                 system_prompt: None,
-                emitter:       &emitter,
-                stage_scope:   &stage_scope,
-                sandbox:       &sandbox,
-                cancel_token:  CancellationToken::new(),
+                emitter: &emitter,
+                stage_scope: &stage_scope,
+                sandbox: &sandbox,
+                cancel_token: CancellationToken::new(),
             })
             .await
             .unwrap();
@@ -1202,13 +1210,13 @@ mod tests {
 
         let result = router
             .one_shot(OneShotRequest {
-                node:          &node,
-                prompt:        "prompt",
+                node: &node,
+                prompt: "prompt",
                 system_prompt: None,
-                emitter:       &emitter,
-                stage_scope:   &stage_scope,
-                sandbox:       &sandbox,
-                cancel_token:  CancellationToken::new(),
+                emitter: &emitter,
+                stage_scope: &stage_scope,
+                sandbox: &sandbox,
+                cancel_token: CancellationToken::new(),
             })
             .await
             .unwrap();
@@ -1234,13 +1242,13 @@ mod tests {
 
         let result = router
             .one_shot(OneShotRequest {
-                node:          &node,
-                prompt:        "prompt",
+                node: &node,
+                prompt: "prompt",
                 system_prompt: None,
-                emitter:       &emitter,
-                stage_scope:   &stage_scope,
-                sandbox:       &sandbox,
-                cancel_token:  CancellationToken::new(),
+                emitter: &emitter,
+                stage_scope: &stage_scope,
+                sandbox: &sandbox,
+                cancel_token: CancellationToken::new(),
             })
             .await
             .unwrap();
@@ -1264,18 +1272,18 @@ mod tests {
     impl CodergenBackend for StubBackend {
         async fn run(&self, _request: CodergenRunRequest<'_>) -> Result<CodergenResult, Error> {
             Ok(CodergenResult::Text {
-                text:              "stub".to_string(),
-                usage:             None,
-                files_touched:     Vec::new(),
+                text: "stub".to_string(),
+                usage: None,
+                files_touched: Vec::new(),
                 last_file_touched: None,
             })
         }
 
         async fn one_shot(&self, _request: OneShotRequest<'_>) -> Result<CodergenResult, Error> {
             Ok(CodergenResult::Text {
-                text:              "api one-shot".to_string(),
-                usage:             None,
-                files_touched:     Vec::new(),
+                text: "api one-shot".to_string(),
+                usage: None,
+                files_touched: Vec::new(),
                 last_file_touched: None,
             })
         }
@@ -1285,9 +1293,9 @@ mod tests {
     /// `CommandTermination` so we can exercise the cancel/timeout paths in
     /// `AgentCliBackend::run` without spawning real processes.
     struct StreamingCliMock {
-        commands:    Arc<Mutex<Vec<String>>>,
+        commands: Arc<Mutex<Vec<String>>>,
         termination: CommandTermination,
-        exit_code:   Option<i32>,
+        exit_code: Option<i32>,
     }
 
     #[async_trait]
@@ -1330,9 +1338,9 @@ mod tests {
                 return Ok(ok_result());
             }
             Ok(ExecResult {
-                stdout:      String::new(),
-                stderr:      String::new(),
-                exit_code:   Some(0),
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: Some(0),
                 termination: CommandTermination::Exited,
                 duration_ms: 1,
             })
@@ -1348,15 +1356,15 @@ mod tests {
         ) -> fabro_sandbox::Result<fabro_sandbox::ExecStreamingResult> {
             self.commands.lock().unwrap().push(command.to_string());
             Ok(fabro_sandbox::ExecStreamingResult {
-                result:            ExecResult {
-                    stdout:      String::new(),
-                    stderr:      String::new(),
-                    exit_code:   self.exit_code,
+                result: ExecResult {
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    exit_code: self.exit_code,
                     termination: self.termination,
                     duration_ms: 5,
                 },
                 streams_separated: true,
-                live_streaming:    true,
+                live_streaming: true,
             })
         }
         async fn grep(
@@ -1411,9 +1419,9 @@ mod tests {
     async fn agent_cli_backend_run_emits_cancelled_event_and_returns_cancelled() {
         let commands = Arc::new(Mutex::new(Vec::new()));
         let sandbox: Arc<dyn Sandbox> = Arc::new(StreamingCliMock {
-            commands:    Arc::clone(&commands),
+            commands: Arc::clone(&commands),
             termination: CommandTermination::Cancelled,
-            exit_code:   None,
+            exit_code: None,
         });
         let backend = AgentCliBackend::new_from_env("claude-opus-4-6".into(), Provider::Anthropic);
         let node = Node::new("step");
@@ -1423,13 +1431,13 @@ mod tests {
 
         let result = backend
             .run(CodergenRunRequest {
-                node:         &node,
-                prompt:       "Do something",
-                context:      &context,
-                thread_id:    None,
-                emitter:      &emitter,
-                sandbox:      &sandbox,
-                tool_hooks:   None,
+                node: &node,
+                prompt: "Do something",
+                context: &context,
+                thread_id: None,
+                emitter: &emitter,
+                sandbox: &sandbox,
+                tool_hooks: None,
                 cancel_token: CancellationToken::new(),
             })
             .await;
@@ -1464,9 +1472,9 @@ mod tests {
     async fn agent_cli_backend_run_emits_timed_out_event_and_returns_handler_error() {
         let commands = Arc::new(Mutex::new(Vec::new()));
         let sandbox: Arc<dyn Sandbox> = Arc::new(StreamingCliMock {
-            commands:    Arc::clone(&commands),
+            commands: Arc::clone(&commands),
             termination: CommandTermination::TimedOut,
-            exit_code:   None,
+            exit_code: None,
         });
         let backend = AgentCliBackend::new_from_env("claude-opus-4-6".into(), Provider::Anthropic);
         let node = Node::new("step");
@@ -1476,13 +1484,13 @@ mod tests {
 
         let result = backend
             .run(CodergenRunRequest {
-                node:         &node,
-                prompt:       "Do something slow",
-                context:      &context,
-                thread_id:    None,
-                emitter:      &emitter,
-                sandbox:      &sandbox,
-                tool_hooks:   None,
+                node: &node,
+                prompt: "Do something slow",
+                context: &context,
+                thread_id: None,
+                emitter: &emitter,
+                sandbox: &sandbox,
+                tool_hooks: None,
                 cancel_token: CancellationToken::new(),
             })
             .await;

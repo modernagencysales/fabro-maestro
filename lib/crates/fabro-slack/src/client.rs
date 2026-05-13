@@ -7,14 +7,21 @@ const SLACK_API_BASE: &str = "https://slack.com/api";
 #[derive(Debug, Clone)]
 pub struct PostedMessage {
     pub channel_id: String,
-    pub ts:         String,
+    pub ts: String,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PostMessageOptions<'a> {
+    pub thread_ts: Option<&'a str>,
+    pub username: Option<&'a str>,
+    pub icon_url: Option<&'a str>,
 }
 
 #[derive(Clone)]
 pub struct SlackClient {
     bot_token: String,
-    api_base:  String,
-    http:      fabro_http::HttpClient,
+    api_base: String,
+    http: fabro_http::HttpClient,
 }
 
 impl SlackClient {
@@ -42,7 +49,28 @@ impl SlackClient {
         blocks: &[Value],
         thread_ts: Option<&str>,
     ) -> Result<PostedMessage, SlackApiError> {
-        let body = build_post_message_body(channel, blocks, thread_ts);
+        let body = build_post_message_body(
+            channel,
+            blocks,
+            PostMessageOptions {
+                thread_ts,
+                ..PostMessageOptions::default()
+            },
+        );
+        self.post_message_body(body).await
+    }
+
+    pub async fn post_message_with_options(
+        &self,
+        channel: &str,
+        blocks: &[Value],
+        options: PostMessageOptions<'_>,
+    ) -> Result<PostedMessage, SlackApiError> {
+        let body = build_post_message_body(channel, blocks, options);
+        self.post_message_body(body).await
+    }
+
+    async fn post_message_body(&self, body: Value) -> Result<PostedMessage, SlackApiError> {
         let resp = self
             .http
             .post(format!("{}/chat.postMessage", self.api_base))
@@ -58,7 +86,7 @@ impl SlackClient {
             .map_err(|e| SlackApiError::Http(e.to_string()))?;
 
         let posted = parse_post_message_response(&json)?;
-        debug!(channel, ts = %posted.ts, "Posted Slack message");
+        debug!(channel = posted.channel_id.as_str(), ts = %posted.ts, "Posted Slack message");
         Ok(posted)
     }
 
@@ -114,7 +142,7 @@ pub fn parse_post_message_response(response: &Value) -> Result<PostedMessage, Sl
         .ok_or_else(|| SlackApiError::Api("missing ts in response".to_string()))?;
     Ok(PostedMessage {
         channel_id: channel_id.to_string(),
-        ts:         ts.to_string(),
+        ts: ts.to_string(),
     })
 }
 
@@ -126,13 +154,23 @@ pub fn parse_wss_url(response: &Value) -> Result<String, SlackApiError> {
         .ok_or_else(|| SlackApiError::Api("missing url in response".to_string()))
 }
 
-fn build_post_message_body(channel: &str, blocks: &[Value], thread_ts: Option<&str>) -> Value {
+fn build_post_message_body(
+    channel: &str,
+    blocks: &[Value],
+    options: PostMessageOptions<'_>,
+) -> Value {
     let mut body = json!({
         "channel": channel,
         "blocks": blocks
     });
-    if let Some(ts) = thread_ts {
+    if let Some(ts) = options.thread_ts {
         body["thread_ts"] = json!(ts);
+    }
+    if let Some(username) = options.username {
+        body["username"] = json!(username);
+    }
+    if let Some(icon_url) = options.icon_url {
+        body["icon_url"] = json!(icon_url);
     }
     body
 }
@@ -151,8 +189,11 @@ mod tests {
 
     #[test]
     fn post_message_request_body_format() {
-        let body =
-            build_post_message_body("#general", &[serde_json::json!({"type": "section"})], None);
+        let body = build_post_message_body(
+            "#general",
+            &[serde_json::json!({"type": "section"})],
+            PostMessageOptions::default(),
+        );
         assert_eq!(body["channel"], "#general");
         assert_eq!(body["blocks"][0]["type"], "section");
         assert!(body["thread_ts"].is_null());
@@ -163,16 +204,36 @@ mod tests {
         let body = build_post_message_body(
             "#general",
             &[serde_json::json!({"type": "section"})],
-            Some("1234.5678"),
+            PostMessageOptions {
+                thread_ts: Some("1234.5678"),
+                ..PostMessageOptions::default()
+            },
         );
         assert_eq!(body["thread_ts"], "1234.5678");
     }
 
     #[test]
+    fn post_message_request_body_with_persona_overrides() {
+        let body = build_post_message_body(
+            "#general",
+            &[serde_json::json!({"type": "section"})],
+            PostMessageOptions {
+                username: Some("Quill"),
+                icon_url: Some("https://example.com/quill.png"),
+                ..PostMessageOptions::default()
+            },
+        );
+        assert_eq!(body["username"], "Quill");
+        assert_eq!(body["icon_url"], "https://example.com/quill.png");
+    }
+
+    #[test]
     fn update_message_request_body_format() {
-        let body = build_update_message_body("#general", "1234.5678", &[
-            serde_json::json!({"type": "section"}),
-        ]);
+        let body = build_update_message_body(
+            "#general",
+            "1234.5678",
+            &[serde_json::json!({"type": "section"})],
+        );
         assert_eq!(body["channel"], "#general");
         assert_eq!(body["ts"], "1234.5678");
         assert_eq!(body["blocks"][0]["type"], "section");

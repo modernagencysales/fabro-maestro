@@ -101,7 +101,7 @@ fn seed_openai_vault(storage_dir: &std::path::Path, base_url: &str, api_key: &st
             "openai",
             &serde_json::to_string(&AuthCredential {
                 provider: Provider::OpenAi,
-                details:  AuthDetails::ApiKey {
+                details: AuthDetails::ApiKey {
                     key: api_key.to_string(),
                 },
             })

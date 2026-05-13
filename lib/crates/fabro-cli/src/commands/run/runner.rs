@@ -283,8 +283,8 @@ fn build_artifact_uploader(
 }
 
 struct HttpArtifactUploader {
-    run_id:       RunId,
-    client:       server_client::Client,
+    run_id: RunId,
+    client: server_client::Client,
     worker_token: String,
 }
 
@@ -333,7 +333,7 @@ impl StageArtifactUploader for HttpArtifactUploader {
 struct HttpRunStore {
     run_id: RunId,
     client: server_client::Client,
-    state:  Arc<Mutex<RunProjection>>,
+    state: Arc<Mutex<RunProjection>>,
     events: Arc<Mutex<Option<Vec<EventEnvelope>>>>,
 }
 
@@ -741,12 +741,12 @@ mod tests {
         );
         assert_eq!(
             worker_title_phase_for_event(&EventBody::InterviewStarted(InterviewStartedProps {
-                question_id:     "q-1".to_string(),
-                question:        "Approve?".to_string(),
-                stage:           "gate".to_string(),
-                question_type:   "yes_no".to_string(),
-                options:         Vec::new(),
-                allow_freeform:  false,
+                question_id: "q-1".to_string(),
+                question: "Approve?".to_string(),
+                stage: "gate".to_string(),
+                question_type: "yes_no".to_string(),
+                options: Vec::new(),
+                allow_freeform: false,
                 timeout_seconds: None,
                 context_display: None,
             })),
@@ -755,47 +755,47 @@ mod tests {
         assert_eq!(
             worker_title_phase_for_event(&EventBody::InterviewCompleted(InterviewCompletedProps {
                 question_id: "q-1".to_string(),
-                question:    "Approve?".to_string(),
-                answer:      "yes".to_string(),
+                question: "Approve?".to_string(),
+                answer: "yes".to_string(),
                 duration_ms: 10,
             })),
             Some(WorkerTitlePhase::Running)
         );
         assert_eq!(
             worker_title_phase_for_event(&EventBody::RunCompleted(RunCompletedProps {
-                duration_ms:          10,
-                artifact_count:       0,
-                status:               "succeeded".to_string(),
-                reason:               SuccessReason::Completed,
-                total_usd_micros:     None,
+                duration_ms: 10,
+                artifact_count: 0,
+                status: "succeeded".to_string(),
+                reason: SuccessReason::Completed,
+                total_usd_micros: None,
                 final_git_commit_sha: None,
-                final_patch:          None,
-                diff_summary:         None,
-                billing:              None,
+                final_patch: None,
+                diff_summary: None,
+                billing: None,
             })),
             Some(WorkerTitlePhase::Succeeded)
         );
         assert_eq!(
             worker_title_phase_for_event(&EventBody::RunFailed(RunFailedProps {
-                error:          "cancelled".to_string(),
-                causes:         Vec::new(),
-                duration_ms:    10,
-                reason:         FailureReason::Cancelled,
+                error: "cancelled".to_string(),
+                causes: Vec::new(),
+                duration_ms: 10,
+                reason: FailureReason::Cancelled,
                 git_commit_sha: None,
-                final_patch:    None,
-                diff_summary:   None,
+                final_patch: None,
+                diff_summary: None,
             })),
             Some(WorkerTitlePhase::Cancelled)
         );
         assert_eq!(
             worker_title_phase_for_event(&EventBody::RunFailed(RunFailedProps {
-                error:          "boom".to_string(),
-                causes:         Vec::new(),
-                duration_ms:    10,
-                reason:         FailureReason::Terminated,
+                error: "boom".to_string(),
+                causes: Vec::new(),
+                duration_ms: 10,
+                reason: FailureReason::Terminated,
                 git_commit_sha: None,
-                final_patch:    None,
-                diff_summary:   None,
+                final_patch: None,
+                diff_summary: None,
             })),
             Some(WorkerTitlePhase::Failed)
         );
@@ -973,7 +973,7 @@ mod tests {
                 "anthropic",
                 &serde_json::to_string(&AuthCredential {
                     provider: Provider::Anthropic,
-                    details:  AuthDetails::ApiKey {
+                    details: AuthDetails::ApiKey {
                         key: "vault-key".to_string(),
                     },
                 })

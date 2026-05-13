@@ -53,6 +53,7 @@ impl EnvVars {
     pub const OPENAI_API_KEY: &'static str = "OPENAI_API_KEY";
     pub const OPENAI_BASE_URL: &'static str = "OPENAI_BASE_URL";
     pub const OPENAI_COMPATIBLE_BASE_URL: &'static str = "OPENAI_COMPATIBLE_BASE_URL";
+    pub const OPENROUTER_API_KEY: &'static str = "OPENROUTER_API_KEY";
     pub const OPENAI_ORGANIZATION: &'static str = "OPENAI_ORGANIZATION";
     pub const OPENAI_PROJECT: &'static str = "OPENAI_PROJECT";
     pub const OPENAI_ORG_ID: &'static str = "OPENAI_ORG_ID";
@@ -191,6 +192,7 @@ mod tests {
             EnvVars::OPENAI_API_KEY,
             EnvVars::OPENAI_BASE_URL,
             EnvVars::OPENAI_COMPATIBLE_BASE_URL,
+            EnvVars::OPENROUTER_API_KEY,
             EnvVars::OPENAI_ORGANIZATION,
             EnvVars::OPENAI_PROJECT,
             EnvVars::OPENAI_ORG_ID,
