@@ -130,15 +130,8 @@ fn process_env_vars() -> Vec<(String, String)> {
     std::env::vars().collect()
 }
 
-#[derive(Debug, Clone, Copy)]
-enum ExplicitEnvPolicy {
-    FilterSensitive,
-    TrustCaller,
-}
-
 fn filtered_env_vars(
     env_vars: Option<&std::collections::HashMap<String, String>>,
-    explicit_policy: ExplicitEnvPolicy,
 ) -> Vec<(String, String)> {
     let mut filtered_env: Vec<(String, String)> = process_env_vars()
         .into_iter()
@@ -147,11 +140,7 @@ fn filtered_env_vars(
 
     if let Some(extra) = env_vars {
         for (key, value) in extra {
-            if matches!(explicit_policy, ExplicitEnvPolicy::TrustCaller)
-                || !LocalSandbox::should_filter_env_var(key)
-            {
-                filtered_env.push((key.clone(), value.clone()));
-            }
+            filtered_env.push((key.clone(), value.clone()));
         }
     }
 
@@ -353,7 +342,7 @@ impl Sandbox for LocalSandbox {
     ) -> crate::Result<ExecResult> {
         let start = Instant::now();
 
-        let filtered_env = filtered_env_vars(env_vars, ExplicitEnvPolicy::FilterSensitive);
+        let filtered_env = filtered_env_vars(env_vars);
 
         let effective_dir =
             working_dir.map_or_else(|| self.working_directory.clone(), std::path::PathBuf::from);
@@ -430,7 +419,7 @@ impl Sandbox for LocalSandbox {
     ) -> crate::Result<ExecStreamingResult> {
         let start = Instant::now();
 
-        let filtered_env = filtered_env_vars(env_vars, ExplicitEnvPolicy::FilterSensitive);
+        let filtered_env = filtered_env_vars(env_vars);
 
         let effective_dir =
             working_dir.map_or_else(|| self.working_directory.clone(), std::path::PathBuf::from);
@@ -510,7 +499,7 @@ impl Sandbox for LocalSandbox {
         env_vars: Option<&std::collections::HashMap<String, String>>,
         cancel_token: Option<CancellationToken>,
     ) -> crate::Result<StdioProcess> {
-        let filtered_env = filtered_env_vars(env_vars, ExplicitEnvPolicy::TrustCaller);
+        let filtered_env = filtered_env_vars(env_vars);
 
         let effective_dir =
             working_dir.map_or_else(|| self.working_directory.clone(), std::path::PathBuf::from);
@@ -1130,11 +1119,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exec_command_filters_sensitive_explicit_env_vars() {
+    async fn exec_command_forwards_explicit_env_vars() {
         let dir = temp_dir();
         let env = LocalSandbox::new(dir.clone());
         let extra = HashMap::from([
-            ("FABRO_WORKER_TOKEN".to_string(), "leaked".to_string()),
+            ("OPENROUTER_API_KEY".to_string(), "test-key".to_string()),
             ("MY_VAR".to_string(), "ok".to_string()),
         ]);
         let result = env
@@ -1142,7 +1131,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.stdout.contains("FABRO_WORKER_TOKEN=leaked"));
+        assert!(result.stdout.contains("OPENROUTER_API_KEY=test-key"));
         assert!(result.stdout.contains("MY_VAR=ok"));
         std::fs::remove_dir_all(&dir).unwrap();
     }
