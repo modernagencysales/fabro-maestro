@@ -1,4 +1,8 @@
 *
+!Dockerfile
+!docker/
 !docker/entrypoint.sh
 !docker/settings.toml
+!tmp/
+!tmp/docker-context/
 !tmp/docker-context/**

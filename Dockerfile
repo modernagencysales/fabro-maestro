@@ -34,7 +34,6 @@ ENV FABRO_HOME=/storage/.home \
     FABRO_STORAGE_DIR=/storage \
     FABRO_LOG_DESTINATION=stdout
 
-VOLUME ["/storage"]
 EXPOSE 32276
 
 ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/fabro-entrypoint"]
