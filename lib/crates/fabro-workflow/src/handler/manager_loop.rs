@@ -146,6 +146,10 @@ fn context_diff(
     diff
 }
 
+fn should_propagate_child_context_key(key: &str) -> bool {
+    !keys::is_engine_internal_key(key) && key != keys::COMMAND_OUTPUT
+}
+
 #[async_trait]
 impl Handler for SubWorkflowHandler {
     async fn execute(
@@ -299,7 +303,7 @@ impl Handler for SubWorkflowHandler {
                     let raw_diff = context_diff(&before_snapshot, &after_snapshot);
                     let diff: HashMap<String, serde_json::Value> = raw_diff
                         .into_iter()
-                        .filter(|(key, _)| !keys::is_engine_internal_key(key))
+                        .filter(|(key, _)| should_propagate_child_context_key(key))
                         .collect();
 
                     tracing::debug!(
@@ -881,6 +885,12 @@ mod tests {
         assert_eq!(filtered.len(), 2);
         assert!(filtered.contains_key("response.plan"));
         assert!(filtered.contains_key("review.result"));
+    }
+
+    #[test]
+    fn context_diff_excludes_child_output_blob_refs() {
+        assert!(!should_propagate_child_context_key(keys::COMMAND_OUTPUT));
+        assert!(should_propagate_child_context_key("review.result"));
     }
 
     #[tokio::test]
