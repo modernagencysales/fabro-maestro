@@ -80,6 +80,22 @@ impl AgentCli {
     }
 }
 
+/// Controls how much sandboxing or approval behavior the launched CLI owns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentCliRuntimePolicy {
+    /// Let the provider CLI use its own default permissions and sandbox rules.
+    CliDefault,
+    /// Fabro owns the outer sandbox/container, so the CLI runs non-interactive.
+    FabroExternalSandbox,
+}
+
+impl AgentCliRuntimePolicy {
+    #[must_use]
+    pub const fn default_for_provider(_provider: Provider) -> Self {
+        Self::FabroExternalSandbox
+    }
+}
+
 /// Verify the provider CLI exists in the sandbox. Fabro does not install agent
 /// CLIs at runtime; sandbox images or setup steps own tool installation.
 async fn verify_cli_available(
@@ -127,6 +143,22 @@ pub fn is_cli_only_model(model: &str) -> bool {
 /// is piped into the command's stdin via `cat`.
 #[must_use]
 pub fn cli_command_for_provider(provider: Provider, model: &str, prompt_file: &str) -> String {
+    cli_command_for_provider_with_policy(
+        provider,
+        model,
+        prompt_file,
+        AgentCliRuntimePolicy::default_for_provider(provider),
+    )
+}
+
+/// Build the CLI command string for a given provider and runtime policy.
+#[must_use]
+pub fn cli_command_for_provider_with_policy(
+    provider: Provider,
+    model: &str,
+    prompt_file: &str,
+    runtime_policy: AgentCliRuntimePolicy,
+) -> String {
     let prompt_file = shell_quote(prompt_file);
     let model_flag = if model.is_empty() {
         String::new()
@@ -149,27 +181,43 @@ pub fn cli_command_for_provider(provider: Provider, model: &str, prompt_file: &s
     // launch wrapper (`setsid sh -c '...' </dev/null`) can clobber stdin
     // redirects in nested shells. A pipe creates an explicit new stdin.
     match provider {
-        // Fabro owns the surrounding sandbox. Disable Codex's internal sandbox
-        // so CLI stages also work in restricted containers such as Railway.
-        // --skip-git-repo-check allows external sandboxes without a checked-out repo.
         Provider::OpenAi
         | Provider::Kimi
         | Provider::Zai
         | Provider::Minimax
         | Provider::Inception
         | Provider::OpenAiCompatible => {
+            let policy_flags = match runtime_policy {
+                AgentCliRuntimePolicy::CliDefault => "",
+                // Fabro owns the surrounding sandbox. Disable Codex's internal sandbox
+                // so CLI stages also work in restricted containers such as Railway.
+                // --skip-git-repo-check allows external sandboxes without a checked-out repo.
+                AgentCliRuntimePolicy::FabroExternalSandbox => {
+                    " --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check"
+                }
+            };
+            format!("cat {prompt_file} | codex exec --json{policy_flags}{model_flag}")
+        }
+        Provider::Gemini => {
+            let policy_flags = match runtime_policy {
+                AgentCliRuntimePolicy::CliDefault => "",
+                // --yolo: auto-approve all tool calls for non-interactive execution.
+                AgentCliRuntimePolicy::FabroExternalSandbox => " --yolo",
+            };
+            format!("cat {prompt_file} | gemini -o json{policy_flags}{model_flag}")
+        }
+        Provider::Anthropic => {
+            let policy_flags = match runtime_policy {
+                AgentCliRuntimePolicy::CliDefault => "",
+                // --dangerously-skip-permissions: bypass all permission checks (required for
+                // non-interactive use). CLAUDECODE= unset to allow running inside a Claude Code
+                // session.
+                AgentCliRuntimePolicy::FabroExternalSandbox => " --dangerously-skip-permissions",
+            };
             format!(
-                "cat {prompt_file} | codex exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check{model_flag}"
+                "cat {prompt_file} | CLAUDECODE= claude -p --verbose --output-format stream-json{policy_flags}{model_flag}"
             )
         }
-        // --yolo: auto-approve all tool calls
-        Provider::Gemini => format!("cat {prompt_file} | gemini -o json --yolo{model_flag}"),
-        // --dangerously-skip-permissions: bypass all permission checks (required for
-        // non-interactive use). CLAUDECODE= unset to allow running inside a Claude Code
-        // session.
-        Provider::Anthropic => format!(
-            "cat {prompt_file} | CLAUDECODE= claude -p --verbose --output-format stream-json --dangerously-skip-permissions{model_flag}"
-        ),
     }
 }
 
@@ -339,6 +387,7 @@ pub fn parse_cli_response(provider: Provider, output: &str) -> Option<CliRespons
 pub struct AgentCliBackend {
     model: String,
     provider: Provider,
+    runtime_policy: AgentCliRuntimePolicy,
     tool_env: Option<Arc<dyn ToolEnvProvider>>,
     github_token_refresh_managed: bool,
     resolver: Option<CredentialResolver>,
@@ -352,6 +401,7 @@ impl AgentCliBackend {
         Self {
             model,
             provider,
+            runtime_policy: AgentCliRuntimePolicy::default_for_provider(provider),
             tool_env: None,
             github_token_refresh_managed: false,
             resolver: Some(resolver),
@@ -365,6 +415,7 @@ impl AgentCliBackend {
         Self {
             model,
             provider,
+            runtime_policy: AgentCliRuntimePolicy::default_for_provider(provider),
             tool_env: None,
             github_token_refresh_managed: false,
             resolver: None,
@@ -393,6 +444,12 @@ impl AgentCliBackend {
     #[must_use]
     pub fn with_run_model_controls(mut self, controls: RunModelControls) -> Self {
         self.run_model_controls = controls;
+        self
+    }
+
+    #[must_use]
+    pub fn with_runtime_policy(mut self, runtime_policy: AgentCliRuntimePolicy) -> Self {
+        self.runtime_policy = runtime_policy;
         self
     }
 
@@ -450,7 +507,8 @@ impl CodergenBackend for AgentCliBackend {
         let cli = AgentCli::for_provider(provider);
         verify_cli_available(cli, sandbox, &cancel_token).await?;
 
-        let command = cli_command_for_provider(provider, model, &prompt_path);
+        let command =
+            cli_command_for_provider_with_policy(provider, model, &prompt_path, self.runtime_policy);
         let stage_scope = StageScope::for_handler(context, &node.id);
         emitter.emit_scoped(
             &Event::AgentCliStarted {
@@ -781,6 +839,18 @@ mod tests {
         assert_eq!(AgentCli::Gemini.name(), "gemini");
     }
 
+    #[test]
+    fn agent_cli_runtime_policy_names_external_sandbox_behavior() {
+        assert_eq!(
+            AgentCliRuntimePolicy::default_for_provider(Provider::OpenAi),
+            AgentCliRuntimePolicy::FabroExternalSandbox
+        );
+        assert_eq!(
+            AgentCliRuntimePolicy::default_for_provider(Provider::Anthropic),
+            AgentCliRuntimePolicy::FabroExternalSandbox
+        );
+    }
+
     // -- verify_cli_available --
 
     use std::collections::VecDeque;
@@ -972,6 +1042,19 @@ mod tests {
         ));
         assert!(cmd.contains("--skip-git-repo-check"));
         assert!(cmd.contains("-m gpt-5.3-codex"));
+    }
+
+    #[test]
+    fn cli_command_for_codex_default_cli_policy_keeps_codex_sandbox_flags_off() {
+        let cmd = cli_command_for_provider_with_policy(
+            Provider::OpenAi,
+            "gpt-5.3-codex",
+            "/tmp/prompt.txt",
+            AgentCliRuntimePolicy::CliDefault,
+        );
+        assert!(cmd.starts_with("cat /tmp/prompt.txt | codex exec --json"));
+        assert!(!cmd.contains("--dangerously-bypass-approvals-and-sandbox"));
+        assert!(!cmd.contains("--skip-git-repo-check"));
     }
 
     #[test]

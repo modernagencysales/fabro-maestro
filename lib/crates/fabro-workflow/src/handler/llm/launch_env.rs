@@ -160,11 +160,7 @@ async fn materialize_codex_auth_json(
         CODEX_AUTH_JSON_BASE64_ENV.to_string(),
         auth_json_base64.to_string(),
     )]);
-    let command = format!(
-        "mkdir -p \"$HOME/.codex\" && umask 077 && printf '%s' \"${}\" | base64 -d > \
-         \"$HOME/.codex/auth.json\"",
-        CODEX_AUTH_JSON_BASE64_ENV
-    );
+    let command = codex_auth_materialization_command();
     let result = request
         .sandbox
         .exec_command(
@@ -191,11 +187,22 @@ async fn materialize_codex_auth_json(
     )))
 }
 
+fn codex_auth_materialization_command() -> String {
+    format!(
+        "mkdir -p \"$HOME/.codex\" && umask 077 && printf '%s' \"${{{}}}\" | base64 -d > \
+         \"$HOME/.codex/auth.json\"",
+        CODEX_AUTH_JSON_BASE64_ENV
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
-    use super::{CODEX_AUTH_JSON_BASE64_ENV, take_codex_auth_json_base64};
+    use super::{
+        CODEX_AUTH_JSON_BASE64_ENV, codex_auth_materialization_command,
+        take_codex_auth_json_base64,
+    };
     use crate::handler::llm::cli::AgentCli;
 
     #[test]
@@ -231,5 +238,16 @@ mod tests {
             env.get(CODEX_AUTH_JSON_BASE64_ENV).map(String::as_str),
             Some("encoded-auth")
         );
+    }
+
+    #[test]
+    fn codex_auth_materialization_command_writes_private_auth_file_from_base64_env() {
+        let command = codex_auth_materialization_command();
+
+        assert!(command.contains("mkdir -p \"$HOME/.codex\""));
+        assert!(command.contains("umask 077"));
+        assert!(command.contains("printf '%s' \"${CODEX_AUTH_JSON_BASE64}\""));
+        assert!(command.contains("base64 -d"));
+        assert!(command.contains("> \"$HOME/.codex/auth.json\""));
     }
 }

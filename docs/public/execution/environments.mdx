@@ -218,6 +218,12 @@ Each provider offers a different level of filesystem isolation:
 
 For `local`, Fabro filters sensitive environment variables (those ending in `_API_KEY`, `_SECRET`, `_TOKEN`, `_PASSWORD`, or `_CREDENTIAL`) but does not restrict file access. Use `docker` or `daytona` when running untrusted workflows.
 
+### CLI backend external sandbox policy
+
+Workflow nodes that use the CLI backend launch provider-owned tools such as Claude Code, Codex, or Gemini inside the selected sandbox. In service or container deployments where Fabro already owns the isolation boundary, Fabro runs those CLIs with an external-sandbox policy so they do not prompt for approvals or require a nested CLI sandbox.
+
+For Codex-backed nodes, that policy disables Codex's internal sandbox and skips the git-repository preflight so runs can execute inside provider workspaces or service-local directories that are not checked-out git repositories. Use this mode only when the surrounding Fabro runtime is already isolated: Daytona cloud VMs, Docker sandboxes, or dedicated service containers such as Railway workers. If a workflow needs to inspect untrusted code or install untrusted dependencies, prefer Daytona or Docker over service-local execution.
+
 ### Network
 
 Each provider handles outbound network access differently:
