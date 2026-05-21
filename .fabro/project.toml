@@ -10,13 +10,6 @@ auto_stop_interval = 30
 [run.sandbox.daytona.labels]
 repo = "fabro-sh/fabro"
 
-[run.sandbox.daytona.snapshot]
-name = "fabro-v11"
-cpu = 8
-memory = "16GB"
-disk = "20GB"
-dockerfile = { path = "Dockerfile" }
-
 # [[run.hooks]]
 # id = "cargo-fmt"
 # name = "cargo-fmt"
