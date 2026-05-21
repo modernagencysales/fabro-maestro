@@ -1,0 +1,642 @@
+{
+  "title": "Improve the Fabro software factory inside modernagencysales/fabro-maestro using docs/factory/maes...",
+  "spec": {
+    "run_id": "01KS6FDF6PNEFVZ32HPK5KJ6R3",
+    "settings": {
+      "project": {
+        "name": null,
+        "description": null,
+        "metadata": {}
+      },
+      "workflow": {
+        "name": null,
+        "description": null,
+        "graph": "workflow.fabro",
+        "metadata": {}
+      },
+      "run": {
+        "goal": {
+          "type": "inline",
+          "value": "Improve the Fabro software factory inside modernagencysales/fabro-maestro using docs/factory/maestro-fabro-perfect-software-factory.md. Do not work on Maestro V2."
+        },
+        "working_dir": "/Users/ajmal/Maestro/fabro-maestro",
+        "metadata": {},
+        "inputs": {},
+        "model": {
+          "provider": "openai",
+          "name": "gpt-5.3-codex",
+          "fallbacks": [],
+          "controls": {
+            "reasoning_effort": "high",
+            "speed": null
+          }
+        },
+        "git": {
+          "author": null
+        },
+        "prepare": {
+          "commands": [
+            ".fabro/scripts/bootstrap-factory-sandbox.sh"
+          ],
+          "timeout_ms": 300000
+        },
+        "execution": {
+          "mode": "normal",
+          "approval": "auto"
+        },
+        "checkpoint": {
+          "exclude_globs": []
+        },
+        "clone": {
+          "enabled": true
+        },
+        "run_branch": {
+          "enabled": true,
+          "push": true
+        },
+        "meta_branch": {
+          "enabled": true,
+          "push": true
+        },
+        "sandbox": {
+          "provider": "daytona",
+          "preserve": true,
+          "stop_on_terminal": true,
+          "devcontainer": false,
+          "env": {},
+          "docker": {
+            "image": "buildpack-deps:noble",
+            "network_mode": null,
+            "memory_limit": 4000000000,
+            "cpu_quota": 200000,
+            "env_vars": {}
+          },
+          "daytona": {
+            "auto_stop_interval": 60,
+            "labels": {
+              "repo": "fabro-sh/fabro"
+            },
+            "snapshot": null,
+            "network": null
+          }
+        },
+        "notifications": {},
+        "interviews": {
+          "provider": null,
+          "slack": null
+        },
+        "agent": {
+          "permissions": null,
+          "mcps": {}
+        },
+        "hooks": [],
+        "scm": {
+          "provider": null,
+          "owner": null,
+          "repository": null,
+          "github": null
+        },
+        "pull_request": {
+          "enabled": true,
+          "draft": true,
+          "auto_merge": false,
+          "merge_strategy": "squash"
+        },
+        "artifacts": {
+          "include": []
+        },
+        "integrations": {
+          "github": {
+            "permissions": {
+              "contents": "write",
+              "issues": "read",
+              "pull_requests": "write"
+            }
+          }
+        }
+      }
+    },
+    "graph": {
+      "name": "FactorySelfImprove",
+      "nodes": {
+        "release_notes": {
+          "id": "release_notes",
+          "attrs": {
+            "label": {
+              "String": "Release Notes"
+            },
+            "fidelity": {
+              "String": "summary:medium"
+            },
+            "provider": {
+              "String": "anthropic"
+            },
+            "prompt": {
+              "String": "# Factory Release Notes\n\nWrite `.factory/release/release.md`.\n\nInclude:\n- summary\n- files changed\n- validation commands and results\n- review findings\n- known risks\n- follow-up factory improvements\n- Fabro run branch\n\nDo not edit source files except `.factory/release/release.md`.\n"
+            },
+            "class": {
+              "String": "docs"
+            },
+            "goal_gate": {
+              "Boolean": true
+            },
+            "model": {
+              "String": "claude-haiku-4-5"
+            },
+            "reasoning_effort": {
+              "String": "medium"
+            }
+          },
+          "classes": [
+            "docs"
+          ]
+        },
+        "implement": {
+          "id": "implement",
+          "attrs": {
+            "model": {
+              "String": "gpt-5.3-codex"
+            },
+            "reasoning_effort": {
+              "String": "high"
+            },
+            "provider": {
+              "String": "openai"
+            },
+            "class": {
+              "String": "coding"
+            },
+            "thread_id": {
+              "String": "factory-implementation"
+            },
+            "fidelity": {
+              "String": "full"
+            },
+            "label": {
+              "String": "Implement Factory Slice"
+            },
+            "prompt": {
+              "String": "# Factory Self-Improvement Implementer\n\nYou are Fabro building Fabro's own Maestro factory.\n\nGoal:\n- Make `.fabro` workflow system more complete, reliable, inspectable, and self-improving.\n- Use `docs/factory/maestro-fabro-perfect-software-factory.md` as source.\n\nRules:\n- Do not edit Maestro V2 files.\n- Do not touch unrelated product code unless needed for factory support.\n- Keep changes small and testable.\n- Prefer adding reusable prompts/scripts/eval contracts over one giant prompt.\n- Reviewers should produce findings, not mutate code.\n- Keep PR step tolerant: pushed branch + recoverable PR helper issue must not erase useful work.\n- Always run `.fabro/scripts/factory-validate.sh --quick` after workflow/prompt changes.\n\nImplement the next useful slice from `.factory/self/plan.md`.\nIf no plan exists, create it first.\n"
+            }
+          },
+          "classes": [
+            "coding"
+          ]
+        },
+        "open_pr": {
+          "id": "open_pr",
+          "attrs": {
+            "model": {
+              "String": "gpt-5-mini"
+            },
+            "label": {
+              "String": "Commit Push PR"
+            },
+            "reasoning_effort": {
+              "String": "medium"
+            },
+            "script": {
+              "String": "set -euo pipefail; git status --short; git add -A; git -c user.email=ajmal@maestrogtm.com -c user.name=ajmal commit -m \"feat(factory): improve self-building factory\" || echo \"No uncommitted changes\"; branch=$(git branch --show-current); git push -u origin HEAD; body=.factory/release/release.md; test -f \"$body\" || body=README.md; if command -v gh >/dev/null 2>&1; then existing=$(gh pr list --repo modernagencysales/fabro-maestro --head \"$branch\" --json url --jq '.[0].url' 2>/tmp/factory-pr.err || true); if [ -n \"$existing\" ]; then echo \"$existing\"; elif gh pr create --repo modernagencysales/fabro-maestro --base main --head \"$branch\" --title \"feat(factory): improve self-building factory\" --body-file \"$body\" --draft; then true; else cat /tmp/factory-pr.err 2>/dev/null || true; echo \"WARN: PR helper failed after branch push; babysitter can create/link PR.\"; fi; else echo \"WARN: gh missing after branch push; babysitter can create/link PR.\"; fi"
+            },
+            "shape": {
+              "String": "parallelogram"
+            },
+            "goal_gate": {
+              "Boolean": true
+            },
+            "provider": {
+              "String": "openai"
+            }
+          }
+        },
+        "plan": {
+          "id": "plan",
+          "attrs": {
+            "class": {
+              "String": "architect"
+            },
+            "label": {
+              "String": "Plan Factory Slice"
+            },
+            "model": {
+              "String": "claude-sonnet-4-6"
+            },
+            "fidelity": {
+              "String": "summary:high"
+            },
+            "provider": {
+              "String": "anthropic"
+            },
+            "goal_gate": {
+              "Boolean": true
+            },
+            "reasoning_effort": {
+              "String": "high"
+            },
+            "prompt": {
+              "String": "# Factory Self-Improvement Planner\n\nYou are improving the Fabro factory inside `modernagencysales/fabro-maestro`.\n\nHard scope:\n- Work on this repo only.\n- Do not work on Maestro V2.\n- Treat `docs/factory/maestro-fabro-perfect-software-factory.md` as product/design source.\n- Improve the factory incrementally: workflows, run configs, prompts, scripts, eval contracts, docs, tests.\n- Prefer small, verifiable patches.\n\nRead:\n- `AGENTS.md`\n- `.fabro/project.toml`\n- `.fabro/workflows/**/workflow.fabro`\n- `docs/factory/maestro-fabro-perfect-software-factory.md`\n\nWrite `.factory/self/plan.md` with:\n- current factory gaps\n- first three concrete patches\n- validation commands\n- risks and guardrails\n\nThen summarize plan.\n"
+            }
+          },
+          "classes": [
+            "architect"
+          ]
+        },
+        "architecture_review": {
+          "id": "architecture_review",
+          "attrs": {
+            "class": {
+              "String": "architect"
+            },
+            "reasoning_effort": {
+              "String": "high"
+            },
+            "model": {
+              "String": "claude-sonnet-4-6"
+            },
+            "label": {
+              "String": "Architecture Review"
+            },
+            "fidelity": {
+              "String": "summary:high"
+            },
+            "prompt": {
+              "String": "# Architecture Reviewer\n\nRead `.fabro/prompts/factory/reviewer.md`.\n\nYou are the architecture reviewer. Focus on:\n- whether workflow topology matches `docs/factory/maestro-fabro-perfect-software-factory.md`\n- prompt/script boundaries\n- whether reviewers are read-only in practice\n- whether future self-improvement slices stay small and inspectable\n\nWrite `.factory/reviews/architecture.md`. Do not edit other files.\n"
+            },
+            "provider": {
+              "String": "anthropic"
+            }
+          },
+          "classes": [
+            "architect"
+          ]
+        },
+        "security_review": {
+          "id": "security_review",
+          "attrs": {
+            "model": {
+              "String": "claude-sonnet-4-6"
+            },
+            "provider": {
+              "String": "anthropic"
+            },
+            "label": {
+              "String": "Security Review"
+            },
+            "fidelity": {
+              "String": "summary:high"
+            },
+            "prompt": {
+              "String": "# Security Reviewer\n\nRead `.fabro/prompts/factory/reviewer.md`.\n\nYou are the security reviewer. Focus on:\n- secrets exposure\n- GitHub token and PR permissions\n- sandbox isolation\n- destructive command risk\n- prevention of Maestro V2 or unrelated repo writes\n\nWrite `.factory/reviews/security.md`. Do not edit other files.\n"
+            },
+            "reasoning_effort": {
+              "String": "high"
+            },
+            "class": {
+              "String": "architect"
+            }
+          },
+          "classes": [
+            "architect"
+          ]
+        },
+        "start": {
+          "id": "start",
+          "attrs": {
+            "reasoning_effort": {
+              "String": "medium"
+            },
+            "model": {
+              "String": "gpt-5-mini"
+            },
+            "label": {
+              "String": "Start"
+            },
+            "shape": {
+              "String": "Mdiamond"
+            },
+            "provider": {
+              "String": "openai"
+            }
+          }
+        },
+        "scope_guard": {
+          "id": "scope_guard",
+          "attrs": {
+            "script": {
+              "String": ".fabro/scripts/factory-scope-guard.sh"
+            },
+            "reasoning_effort": {
+              "String": "medium"
+            },
+            "goal_gate": {
+              "Boolean": true
+            },
+            "model": {
+              "String": "gpt-5-mini"
+            },
+            "label": {
+              "String": "Scope Guard"
+            },
+            "shape": {
+              "String": "parallelogram"
+            },
+            "provider": {
+              "String": "openai"
+            }
+          }
+        },
+        "validate": {
+          "id": "validate",
+          "attrs": {
+            "shape": {
+              "String": "parallelogram"
+            },
+            "provider": {
+              "String": "openai"
+            },
+            "label": {
+              "String": "Validate Factory"
+            },
+            "reasoning_effort": {
+              "String": "medium"
+            },
+            "model": {
+              "String": "gpt-5-mini"
+            },
+            "goal_gate": {
+              "Boolean": true
+            },
+            "script": {
+              "String": ".fabro/scripts/factory-validate.sh"
+            },
+            "retry_target": {
+              "String": "fix_validation"
+            }
+          }
+        },
+        "fix_validation": {
+          "id": "fix_validation",
+          "attrs": {
+            "fidelity": {
+              "String": "full"
+            },
+            "provider": {
+              "String": "openai"
+            },
+            "thread_id": {
+              "String": "factory-implementation"
+            },
+            "model": {
+              "String": "gpt-5.3-codex"
+            },
+            "label": {
+              "String": "Fix Validation"
+            },
+            "reasoning_effort": {
+              "String": "high"
+            },
+            "max_visits": {
+              "Integer": 3
+            },
+            "class": {
+              "String": "coding"
+            },
+            "prompt": {
+              "String": "# Factory Validation Fixer\n\nValidation failed.\n\nRead:\n- `.factory/self/validation.log`\n- current git diff\n- failing workflow or script\n\nFix only the failing factory issue. Do not expand scope. Do not edit Maestro V2. Re-run:\n\n```bash\n.fabro/scripts/factory-validate.sh --quick\n```\n\nIf full validation failed, also rerun the failed full command.\n"
+            }
+          },
+          "classes": [
+            "coding"
+          ]
+        },
+        "qa_review": {
+          "id": "qa_review",
+          "attrs": {
+            "label": {
+              "String": "QA Review"
+            },
+            "provider": {
+              "String": "gemini"
+            },
+            "fidelity": {
+              "String": "summary:high"
+            },
+            "model": {
+              "String": "gemini-3.1-pro-preview"
+            },
+            "class": {
+              "String": "critic"
+            },
+            "reasoning_effort": {
+              "String": "high"
+            },
+            "prompt": {
+              "String": "# QA Reviewer\n\nRead `.fabro/prompts/factory/reviewer.md`.\n\nYou are the QA reviewer. Focus on:\n- validation commands\n- workflow pass/fail routing\n- generated artifact handling\n- whether changes can be operated by future Fabro runs\n\nWrite `.factory/reviews/qa.md`. Do not edit other files.\n"
+            }
+          },
+          "classes": [
+            "critic"
+          ]
+        },
+        "preflight": {
+          "id": "preflight",
+          "attrs": {
+            "provider": {
+              "String": "openai"
+            },
+            "model": {
+              "String": "gpt-5-mini"
+            },
+            "goal_gate": {
+              "Boolean": true
+            },
+            "shape": {
+              "String": "parallelogram"
+            },
+            "script": {
+              "String": "set -euo pipefail; remote=$(git remote get-url origin); echo \"origin=${remote}\"; case \"$remote\" in *modernagencysales/fabro-maestro*|*fabro-sh/fabro*) ;; *) echo \"FAIL: expected fabro-maestro/fabro origin\"; exit 1;; esac; test -f docs/factory/maestro-fabro-perfect-software-factory.md; .fabro/scripts/factory-validate.sh --quick"
+            },
+            "reasoning_effort": {
+              "String": "medium"
+            },
+            "label": {
+              "String": "Factory Preflight"
+            }
+          }
+        },
+        "exit": {
+          "id": "exit",
+          "attrs": {
+            "model": {
+              "String": "gpt-5-mini"
+            },
+            "shape": {
+              "String": "Msquare"
+            },
+            "reasoning_effort": {
+              "String": "medium"
+            },
+            "label": {
+              "String": "Exit"
+            },
+            "provider": {
+              "String": "openai"
+            }
+          }
+        }
+      },
+      "edges": [
+        {
+          "from": "start",
+          "to": "preflight",
+          "attrs": {}
+        },
+        {
+          "from": "preflight",
+          "to": "plan",
+          "attrs": {}
+        },
+        {
+          "from": "plan",
+          "to": "implement",
+          "attrs": {}
+        },
+        {
+          "from": "implement",
+          "to": "scope_guard",
+          "attrs": {}
+        },
+        {
+          "from": "scope_guard",
+          "to": "validate",
+          "attrs": {}
+        },
+        {
+          "from": "validate",
+          "to": "qa_review",
+          "attrs": {}
+        },
+        {
+          "from": "validate",
+          "to": "fix_validation",
+          "attrs": {
+            "condition": {
+              "String": "outcome=failed"
+            }
+          }
+        },
+        {
+          "from": "fix_validation",
+          "to": "scope_guard",
+          "attrs": {}
+        },
+        {
+          "from": "qa_review",
+          "to": "security_review",
+          "attrs": {}
+        },
+        {
+          "from": "security_review",
+          "to": "architecture_review",
+          "attrs": {}
+        },
+        {
+          "from": "architecture_review",
+          "to": "release_notes",
+          "attrs": {}
+        },
+        {
+          "from": "release_notes",
+          "to": "open_pr",
+          "attrs": {}
+        },
+        {
+          "from": "open_pr",
+          "to": "exit",
+          "attrs": {}
+        }
+      ],
+      "attrs": {
+        "max_node_visits": {
+          "Integer": 10
+        },
+        "default_fidelity": {
+          "String": "summary:high"
+        },
+        "goal": {
+          "String": "Improve the Fabro software factory inside modernagencysales/fabro-maestro using docs/factory/maestro-fabro-perfect-software-factory.md. Do not work on Maestro V2."
+        },
+        "model_stylesheet": {
+          "String": "\n      *          { model: gpt-5-mini; reasoning_effort: medium; }\n      .coding    { model: gpt-5.3-codex; reasoning_effort: high; }\n      .architect { model: claude-sonnet-4-6; reasoning_effort: high; }\n      .critic    { model: gemini-3.1-pro-preview; reasoning_effort: high; }\n      .docs      { model: claude-haiku-4-5; reasoning_effort: medium; }\n    "
+        },
+        "stall_timeout": {
+          "Duration": {
+            "secs": 7200,
+            "nanos": 0
+          }
+        },
+        "rankdir": {
+          "String": "LR"
+        }
+      }
+    },
+    "graph_source": "digraph FactorySelfImprove {\n  graph [\n    goal=\"Improve the Fabro software factory inside modernagencysales/fabro-maestro. Do not work on Maestro V2.\",\n    rankdir=LR,\n    default_fidelity=\"summary:high\",\n    max_node_visits=10,\n    stall_timeout=\"7200s\",\n    model_stylesheet=\"\n      *          { model: gpt-5-mini; reasoning_effort: medium; }\n      .coding    { model: gpt-5.3-codex; reasoning_effort: high; }\n      .architect { model: claude-sonnet-4-6; reasoning_effort: high; }\n      .critic    { model: gemini-3.1-pro-preview; reasoning_effort: high; }\n      .docs      { model: claude-haiku-4-5; reasoning_effort: medium; }\n    \"\n  ]\n\n  start [shape=Mdiamond, label=\"Start\"]\n  exit  [shape=Msquare, label=\"Exit\"]\n\n  preflight [\n    label=\"Factory Preflight\",\n    shape=parallelogram,\n    goal_gate=true,\n    script=\"set -euo pipefail; remote=$(git remote get-url origin); echo \\\"origin=${remote}\\\"; case \\\"$remote\\\" in *modernagencysales/fabro-maestro*|*fabro-sh/fabro*) ;; *) echo \\\"FAIL: expected fabro-maestro/fabro origin\\\"; exit 1;; esac; test -f docs/factory/maestro-fabro-perfect-software-factory.md; .fabro/scripts/factory-validate.sh --quick\"\n  ]\n\n  plan [\n    label=\"Plan Factory Slice\",\n    class=\"architect\",\n    fidelity=\"summary:high\",\n    prompt=\"@../../prompts/factory/planner.md\",\n    goal_gate=true\n  ]\n\n  implement [\n    label=\"Implement Factory Slice\",\n    class=\"coding\",\n    fidelity=\"full\",\n    thread_id=\"factory-implementation\",\n    prompt=\"@../../prompts/factory/implementer.md\"\n  ]\n\n  scope_guard [\n    label=\"Scope Guard\",\n    shape=parallelogram,\n    goal_gate=true,\n    script=\".fabro/scripts/factory-scope-guard.sh\"\n  ]\n\n  validate [\n    label=\"Validate Factory\",\n    shape=parallelogram,\n    goal_gate=true,\n    retry_target=\"fix_validation\",\n    script=\".fabro/scripts/factory-validate.sh\"\n  ]\n\n  fix_validation [\n    label=\"Fix Validation\",\n    class=\"coding\",\n    fidelity=\"full\",\n    thread_id=\"factory-implementation\",\n    max_visits=3,\n    prompt=\"@../../prompts/factory/fixer.md\"\n  ]\n\n  qa_review [\n    label=\"QA Review\",\n    class=\"critic\",\n    fidelity=\"summary:high\",\n    prompt=\"@../../prompts/factory/qa-reviewer.md\"\n  ]\n\n  security_review [\n    label=\"Security Review\",\n    class=\"architect\",\n    fidelity=\"summary:high\",\n    prompt=\"@../../prompts/factory/security-reviewer.md\"\n  ]\n\n  architecture_review [\n    label=\"Architecture Review\",\n    class=\"architect\",\n    fidelity=\"summary:high\",\n    prompt=\"@../../prompts/factory/architecture-reviewer.md\"\n  ]\n\n  release_notes [\n    label=\"Release Notes\",\n    class=\"docs\",\n    fidelity=\"summary:medium\",\n    prompt=\"@../../prompts/factory/release.md\",\n    goal_gate=true\n  ]\n\n  open_pr [\n    label=\"Commit Push PR\",\n    shape=parallelogram,\n    goal_gate=true,\n    script=\"set -euo pipefail; git status --short; git add -A; git -c user.email=ajmal@maestrogtm.com -c user.name=ajmal commit -m \\\"feat(factory): improve self-building factory\\\" || echo \\\"No uncommitted changes\\\"; branch=$(git branch --show-current); git push -u origin HEAD; body=.factory/release/release.md; test -f \\\"$body\\\" || body=README.md; if command -v gh >/dev/null 2>&1; then existing=$(gh pr list --repo modernagencysales/fabro-maestro --head \\\"$branch\\\" --json url --jq '.[0].url' 2>/tmp/factory-pr.err || true); if [ -n \\\"$existing\\\" ]; then echo \\\"$existing\\\"; elif gh pr create --repo modernagencysales/fabro-maestro --base main --head \\\"$branch\\\" --title \\\"feat(factory): improve self-building factory\\\" --body-file \\\"$body\\\" --draft; then true; else cat /tmp/factory-pr.err 2>/dev/null || true; echo \\\"WARN: PR helper failed after branch push; babysitter can create/link PR.\\\"; fi; else echo \\\"WARN: gh missing after branch push; babysitter can create/link PR.\\\"; fi\"\n  ]\n\n  start -> preflight -> plan -> implement -> scope_guard -> validate\n  validate -> qa_review\n  validate -> fix_validation [condition=\"outcome=failed\"]\n  fix_validation -> scope_guard\n  qa_review -> security_review -> architecture_review -> release_notes -> open_pr -> exit\n}\n",
+    "workflow_slug": "factory-self-improve",
+    "source_directory": "/Users/ajmal/Maestro/fabro-maestro",
+    "provenance": {
+      "server": {
+        "version": "0.232.0-nightly.0"
+      },
+      "client": {
+        "user_agent": "fabro-cli/0.240.0-nightly.0",
+        "name": "fabro-cli",
+        "version": "0.240.0-nightly.0"
+      },
+      "subject": {
+        "kind": "user",
+        "identity": {
+          "issuer": "fabro:dev",
+          "subject": "dev"
+        },
+        "login": "dev",
+        "auth_method": "dev_token"
+      }
+    },
+    "manifest_blob": "5897b122316441f9db484de1576f2d53230537534e02c7630c91579c4a463998",
+    "definition_blob": "b0b53d40fa4b369e300d6a36477433eaa9cc14e2411e853dbae7f8240431f53e",
+    "git": {
+      "origin_url": "https://github.com/modernagencysales/fabro-maestro",
+      "branch": "main",
+      "sha": "6ee133966a8d5262de48109b3ea53d7f5fa78d82",
+      "dirty": "clean",
+      "push_outcome": {
+        "type": "not_attempted"
+      }
+    }
+  },
+  "web_url": "https://fabro-maestro-production.up.railway.app/runs/01KS6FDF6PNEFVZ32HPK5KJ6R3",
+  "start": null,
+  "status": {
+    "kind": "starting"
+  },
+  "status_updated_at": "2026-05-21T23:54:59.595462714Z",
+  "last_event_at": "2026-05-21T23:55:36.653329982Z",
+  "pending_control": null,
+  "checkpoints": [],
+  "conclusion": null,
+  "sandbox": {
+    "provider": "daytona",
+    "image": "buildpack-deps:noble",
+    "runtime": {
+      "id": "fabro-01KS6FDF6PNEFVZ32HPK5KJ6R3",
+      "working_directory": "/home/daytona/workspace",
+      "repo_cloned": true,
+      "clone_origin_url": "https://github.com/modernagencysales/fabro-maestro",
+      "clone_branch": "main"
+    }
+  },
+  "pull_request": null,
+  "superseded_by": null,
+  "pending_interviews": {},
+  "stages": {}
+}
