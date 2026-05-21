@@ -149,7 +149,8 @@ pub fn cli_command_for_provider(provider: Provider, model: &str, prompt_file: &s
     // launch wrapper (`setsid sh -c '...' </dev/null`) can clobber stdin
     // redirects in nested shells. A pipe creates an explicit new stdin.
     match provider {
-        // --full-auto: sandboxed auto-execution, escalates on request.
+        // Fabro owns the surrounding sandbox. Disable Codex's internal sandbox
+        // so CLI stages also work in restricted containers such as Railway.
         // --skip-git-repo-check allows external sandboxes without a checked-out repo.
         Provider::OpenAi
         | Provider::Kimi
@@ -158,7 +159,7 @@ pub fn cli_command_for_provider(provider: Provider, model: &str, prompt_file: &s
         | Provider::Inception
         | Provider::OpenAiCompatible => {
             format!(
-                "cat {prompt_file} | codex exec --json --full-auto --skip-git-repo-check{model_flag}"
+                "cat {prompt_file} | codex exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check{model_flag}"
             )
         }
         // --yolo: auto-approve all tool calls
@@ -966,7 +967,9 @@ mod tests {
     #[test]
     fn cli_command_for_codex() {
         let cmd = cli_command_for_provider(Provider::OpenAi, "gpt-5.3-codex", "/tmp/prompt.txt");
-        assert!(cmd.starts_with("cat /tmp/prompt.txt | codex exec --json --full-auto"));
+        assert!(cmd.starts_with(
+            "cat /tmp/prompt.txt | codex exec --json --dangerously-bypass-approvals-and-sandbox"
+        ));
         assert!(cmd.contains("--skip-git-repo-check"));
         assert!(cmd.contains("-m gpt-5.3-codex"));
     }
@@ -992,7 +995,9 @@ mod tests {
     #[test]
     fn cli_command_omits_model_when_empty() {
         let cmd = cli_command_for_provider(Provider::OpenAi, "", "/tmp/prompt.txt");
-        assert!(cmd.contains("codex exec --json --full-auto"));
+        assert!(cmd.contains(
+            "codex exec --json --dangerously-bypass-approvals-and-sandbox"
+        ));
         assert!(cmd.contains("--skip-git-repo-check"));
         assert!(!cmd.contains("-m "));
         let cmd = cli_command_for_provider(Provider::Anthropic, "", "/tmp/prompt.txt");
