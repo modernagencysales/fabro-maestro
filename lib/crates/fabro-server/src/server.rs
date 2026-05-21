@@ -56,7 +56,8 @@ use fabro_llm::types::{
     ContentPart, FinishReason, Message as LlmMessage, Request as LlmRequest, Role, ToolChoice,
     ToolDefinition,
 };
-use fabro_model::{BilledTokenCounts, Catalog, ModelTestMode, Provider};
+use fabro_model::catalog::LlmCatalogSettings;
+use fabro_model::{BilledTokenCounts, Catalog, ModelRef, ModelTestMode, ProviderId};
 use fabro_redact::redact_jsonl_line;
 use fabro_sandbox::daytona::{self, DaytonaSandbox};
 use fabro_sandbox::details::sandbox_details;
@@ -242,7 +243,7 @@ struct ModelBillingTotals {
 struct BillingAccumulator {
     total_runs:         i64,
     total_runtime_secs: f64,
-    by_model:           HashMap<String, ModelBillingTotals>,
+    by_model:           HashMap<ModelRef, ModelBillingTotals>,
 }
 
 pub(crate) type RegistryFactoryOverride =
@@ -384,7 +385,7 @@ impl SlackService {
         }
     }
 
-    async fn handle_event(&self, event: &RunEvent) {
+    async fn handle_event(&self, event: &RunEvent, run_web_url: Option<&str>) {
         match &event.body {
             EventBody::InterviewStarted(props) => {
                 if props.question_id.is_empty() {
@@ -414,6 +415,7 @@ impl SlackService {
                     &event.run_id.to_string(),
                     &props.question_id,
                     &question,
+                    run_web_url,
                 );
 
                 if let Ok(posted) = self
@@ -527,8 +529,10 @@ pub struct AppState {
     manifest_run_defaults: RwLock<Arc<RunLayer>>,
     manifest_run_settings: RwLock<std::result::Result<RunNamespace, SharedError>>,
     pub(crate) server_settings: RwLock<Arc<ServerSettings>>,
+    catalog: RwLock<Arc<Catalog>>,
     pub(crate) env_lookup: EnvLookup,
     pub(crate) github_api_base_url: String,
+    active_config_path: PathBuf,
     http_client: Option<fabro_http::HttpClient>,
     shutdown: CancellationToken,
     shutting_down: AtomicBool,
@@ -593,6 +597,7 @@ pub(crate) struct AppStateConfig {
     pub(crate) server_secrets:            ServerSecrets,
     pub(crate) env_lookup:                EnvLookup,
     pub(crate) github_api_base_url:       Option<String>,
+    pub(crate) active_config_path:        PathBuf,
     pub(crate) http_client:               Option<fabro_http::HttpClient>,
     pub(crate) shutdown:                  CancellationToken,
 }
@@ -602,6 +607,7 @@ pub(crate) struct ResolvedAppStateSettings {
     pub(crate) server_settings:       ServerSettings,
     pub(crate) manifest_run_defaults: RunLayer,
     pub(crate) manifest_run_settings: std::result::Result<RunNamespace, SharedError>,
+    pub(crate) llm_catalog_settings:  LlmCatalogSettings,
 }
 
 fn accumulate_billing_rollup(
@@ -611,10 +617,7 @@ fn accumulate_billing_rollup(
     accumulator.total_runs += 1;
     accumulator.total_runtime_secs += rollup.runtime_ms as f64 / 1000.0;
     for model in &rollup.by_model {
-        let entry = accumulator
-            .by_model
-            .entry(model.model.model_id.clone())
-            .or_default();
+        let entry = accumulator.by_model.entry(model.model.clone()).or_default();
         entry.stages += model.stages;
         entry.billing.add_counts(&model.billing);
     }
@@ -660,6 +663,14 @@ impl AppState {
         )
     }
 
+    pub(crate) fn catalog(&self) -> Arc<Catalog> {
+        Arc::clone(&self.catalog.read().expect("catalog lock poisoned"))
+    }
+
+    pub(crate) fn active_config_path(&self) -> &std::path::Path {
+        &self.active_config_path
+    }
+
     pub(crate) fn manifest_run_settings(&self) -> std::result::Result<RunNamespace, SharedError> {
         self.manifest_run_settings
             .read()
@@ -693,7 +704,7 @@ impl AppState {
     }
 
     pub(crate) async fn resolve_llm_client(&self) -> anyhow::Result<LlmClientResult> {
-        resolve_llm_client_from_source(self.llm_source.as_ref()).await
+        resolve_llm_client_from_source(self.llm_source.as_ref(), self.catalog()).await
     }
 
     pub(crate) fn vault_or_env(&self, name: &str) -> Option<String> {
@@ -826,9 +837,14 @@ impl AppState {
             server_settings,
             manifest_run_defaults,
             manifest_run_settings,
+            llm_catalog_settings,
         } = resolved_settings;
         let server_settings = Arc::new(server_settings);
         let manifest_run_defaults = Arc::new(manifest_run_defaults);
+        let catalog = Arc::new(
+            Catalog::from_builtin_with_overrides(&llm_catalog_settings)
+                .context("building LLM model catalog")?,
+        );
         resolve_canonical_origin(&server_settings.server, &self.env_lookup)
             .map_err(anyhow::Error::msg)?;
 
@@ -844,18 +860,20 @@ impl AppState {
             .server_settings
             .write()
             .expect("server settings lock poisoned") = server_settings;
+        *self.catalog.write().expect("catalog lock poisoned") = catalog;
         Ok(())
     }
 }
 
 async fn resolve_llm_client_from_source(
     source: &dyn CredentialSource,
+    catalog: Arc<Catalog>,
 ) -> anyhow::Result<LlmClientResult> {
     let resolved = source
-        .resolve()
+        .resolve(catalog.as_ref())
         .await
         .context("resolving LLM credentials")?;
-    let client = LlmClient::from_credentials(resolved.credentials)
+    let client = LlmClient::from_credentials(resolved.credentials, catalog)
         .await
         .context("creating LLM client")?;
 
@@ -906,7 +924,14 @@ fn start_optional_slack_service(state: &Arc<AppState>) {
         loop {
             match rx.recv().await {
                 Ok(envelope) => {
-                    event_service.handle_event(&envelope.event).await;
+                    // Resolve the run's web URL once per event so the Slack
+                    // message can deep-link back to Fabro. Returns None when
+                    // the web UI is disabled or `server.web.url` is unset, in
+                    // which case `question_to_blocks` simply omits the link.
+                    let run_web_url = event_state.run_web_url(&envelope.event.run_id);
+                    event_service
+                        .handle_event(&envelope.event, run_web_url.as_deref())
+                        .await;
                 }
                 Err(RecvError::Lagged(_)) => {}
                 Err(RecvError::Closed) => break,
@@ -1503,6 +1528,7 @@ pub(crate) fn build_app_state(config: AppStateConfig) -> anyhow::Result<Arc<AppS
         server_secrets,
         env_lookup,
         github_api_base_url,
+        active_config_path,
         http_client,
         shutdown,
     } = config;
@@ -1519,6 +1545,10 @@ pub(crate) fn build_app_state(config: AppStateConfig) -> anyhow::Result<Arc<AppS
     let current_server_settings = Arc::new(resolved_settings.server_settings);
     let current_manifest_run_defaults = Arc::new(resolved_settings.manifest_run_defaults);
     let current_manifest_run_settings = resolved_settings.manifest_run_settings;
+    let current_catalog = Arc::new(
+        Catalog::from_builtin_with_overrides(&resolved_settings.llm_catalog_settings)
+            .context("building LLM model catalog")?,
+    );
     let slack_service = {
         current_server_settings
             .server
@@ -1563,8 +1593,10 @@ pub(crate) fn build_app_state(config: AppStateConfig) -> anyhow::Result<Arc<AppS
         manifest_run_defaults: RwLock::new(current_manifest_run_defaults),
         manifest_run_settings: RwLock::new(current_manifest_run_settings),
         server_settings: RwLock::new(current_server_settings),
+        catalog: RwLock::new(current_catalog),
         env_lookup: Arc::clone(&env_lookup),
         github_api_base_url,
+        active_config_path,
         http_client,
         shutdown,
         shutting_down: AtomicBool::new(false),
@@ -2056,19 +2088,10 @@ pub(crate) async fn reconcile_incomplete_runs_on_startup(
             summary.lifecycle.pending_control,
             "Fabro server restarted before the run reached a terminal state.".to_string(),
         );
-        workflow_event::append_event(
-            &run_store,
-            &summary.id,
-            &workflow_event::Event::WorkflowRunFailed {
-                error,
-                duration_ms: 0,
-                reason,
-                git_commit_sha: None,
-                final_patch: None,
-                diff_summary: None,
-            },
-        )
-        .await?;
+        let failure_event = workflow_event::Event::workflow_run_failed_from_error(
+            &error, 0, reason, None, None, None, None,
+        );
+        workflow_event::append_event(&run_store, &summary.id, &failure_event).await?;
         reconciled += 1;
     }
 
@@ -2110,19 +2133,10 @@ async fn persist_shutdown_run_failures(
             run_state.pending_control,
             "Fabro server shut down before the run reached a terminal state.".to_string(),
         );
-        workflow_event::append_event(
-            &run_store,
-            &run_id,
-            &workflow_event::Event::WorkflowRunFailed {
-                error,
-                duration_ms: 0,
-                reason,
-                git_commit_sha: None,
-                final_patch: None,
-                diff_summary: None,
-            },
-        )
-        .await?;
+        let failure_event = workflow_event::Event::workflow_run_failed_from_error(
+            &error, 0, reason, None, None, None, None,
+        );
+        workflow_event::append_event(&run_store, &run_id, &failure_event).await?;
     }
 
     Ok(())
@@ -2190,19 +2204,16 @@ async fn persist_cancelled_run_status(state: &AppState, run_id: RunId) -> anyhow
         return Ok(());
     }
 
-    workflow_event::append_event(
-        &run_store,
-        &run_id,
-        &workflow_event::Event::WorkflowRunFailed {
-            error:          WorkflowError::Cancelled,
-            duration_ms:    0,
-            reason:         FailureReason::Cancelled,
-            git_commit_sha: None,
-            final_patch:    None,
-            diff_summary:   None,
-        },
-    )
-    .await
+    let failure_event = workflow_event::Event::workflow_run_failed_from_error(
+        &WorkflowError::Cancelled,
+        0,
+        FailureReason::Cancelled,
+        None,
+        None,
+        None,
+        None,
+    );
+    workflow_event::append_event(&run_store, &run_id, &failure_event).await
 }
 
 async fn finish_cancelled_run_before_execution(state: &Arc<AppState>, run_id: RunId) {
@@ -2229,19 +2240,17 @@ async fn fail_run_before_execution(
 ) {
     match state.store.open_run(&run_id).await {
         Ok(run_store) => {
-            if let Err(err) = workflow_event::append_event(
-                &run_store,
-                &run_id,
-                &workflow_event::Event::WorkflowRunFailed {
-                    error: WorkflowError::engine(message.clone()),
-                    duration_ms: 0,
-                    reason,
-                    git_commit_sha: None,
-                    final_patch: None,
-                    diff_summary: None,
-                },
-            )
-            .await
+            let failure_event = workflow_event::Event::workflow_run_failed_from_error(
+                &WorkflowError::engine(message.clone()),
+                0,
+                reason,
+                None,
+                None,
+                None,
+                None,
+            );
+            if let Err(err) =
+                workflow_event::append_event(&run_store, &run_id, &failure_event).await
             {
                 error!(run_id = %run_id, error = %err, "Failed to persist run failure status");
             }
@@ -2401,9 +2410,9 @@ fn update_live_run_from_event(state: &AppState, run_id: RunId, event: &RunEvent)
         }
         EventBody::RunFailed(props) => {
             managed_run.status = RunStatus::Failed {
-                reason: props.reason,
+                reason: props.failure.reason,
             };
-            managed_run.error = Some(props.error.clone());
+            managed_run.error = Some(props.failure.message.clone());
             managed_run.active_api_stages.clear();
             managed_run.active_non_steerable_agent_stages.clear();
         }
@@ -2514,21 +2523,11 @@ async fn append_worker_exit_failure(
         state.pending_control,
         format!("Worker exited before emitting a terminal run event: {wait_status}"),
     );
+    let failure_event = workflow_event::Event::workflow_run_failed_from_error(
+        &error, 0, reason, None, None, None, None,
+    );
 
-    if let Err(err) = workflow_event::append_event(
-        run_store,
-        &run_id,
-        &workflow_event::Event::WorkflowRunFailed {
-            error,
-            duration_ms: 0,
-            reason,
-            git_commit_sha: None,
-            final_patch: None,
-            diff_summary: None,
-        },
-    )
-    .await
-    {
+    if let Err(err) = workflow_event::append_event(run_store, &run_id, &failure_event).await {
         tracing::warn!(run_id = %run_id, error = %err, "Failed to append worker exit failure");
     }
 }
@@ -2585,6 +2584,7 @@ fn worker_command(
     }
     let value: &'static str = server_destination.into();
     cmd.env(EnvVars::FABRO_LOG_DESTINATION, value);
+    cmd.env(EnvVars::FABRO_CONFIG, state.active_config_path());
     cmd.env_remove(EnvVars::FABRO_WORKER_TOKEN);
     cmd.env(EnvVars::FABRO_WORKER_TOKEN, worker_token);
     if let Some(pem) = state.server_secret(EnvVars::GITHUB_APP_PRIVATE_KEY) {
@@ -3015,6 +3015,7 @@ async fn execute_run_in_process(state: Arc<AppState>, run_id: RunId) {
         github_app,
         github_permissions,
         vault: Some(Arc::clone(&state.vault)),
+        catalog: state.catalog(),
         on_node: None,
         registry_override,
     };
@@ -3176,25 +3177,18 @@ async fn execute_run_subprocess(state: Arc<AppState>, run_id: RunId) {
         Ok(child) => child,
         Err(err) => {
             tracing::error!(run_id = %run_id, error = %err, "Failed to spawn worker");
-            let _ = workflow_event::append_event(
-                &run_store,
-                &run_id,
-                &workflow_event::Event::WorkflowRunFailed {
-                    error:          WorkflowError::engine(err.to_string()),
-                    duration_ms:    0,
-                    reason:         FailureReason::LaunchFailed,
-                    git_commit_sha: None,
-                    final_patch:    None,
-                    diff_summary:   None,
-                },
-            )
-            .await;
-            fail_managed_run(
-                &state,
-                run_id,
+            let message = format!("Failed to spawn worker: {err}");
+            let failure_event = workflow_event::Event::workflow_run_failed_from_error(
+                &WorkflowError::engine_with_anyhow("Failed to spawn worker", err),
+                0,
                 FailureReason::LaunchFailed,
-                format!("Failed to spawn worker: {err}"),
+                None,
+                None,
+                None,
+                None,
             );
+            let _ = workflow_event::append_event(&run_store, &run_id, &failure_event).await;
+            fail_managed_run(&state, run_id, FailureReason::LaunchFailed, message);
             state.scheduler_notify.notify_one();
             return;
         }
@@ -3204,19 +3198,16 @@ async fn execute_run_subprocess(state: Arc<AppState>, run_id: RunId) {
         let message = "Worker process did not report a PID".to_string();
         tracing::error!(run_id = %run_id, "{message}");
         let _ = child.start_kill();
-        let _ = workflow_event::append_event(
-            &run_store,
-            &run_id,
-            &workflow_event::Event::WorkflowRunFailed {
-                error:          WorkflowError::engine(message.clone()),
-                duration_ms:    0,
-                reason:         FailureReason::LaunchFailed,
-                git_commit_sha: None,
-                final_patch:    None,
-                diff_summary:   None,
-            },
-        )
-        .await;
+        let failure_event = workflow_event::Event::workflow_run_failed_from_error(
+            &WorkflowError::engine(message.clone()),
+            0,
+            FailureReason::LaunchFailed,
+            None,
+            None,
+            None,
+            None,
+        );
+        let _ = workflow_event::append_event(&run_store, &run_id, &failure_event).await;
         fail_managed_run(&state, run_id, FailureReason::LaunchFailed, message);
         state.scheduler_notify.notify_one();
         return;
@@ -3235,19 +3226,16 @@ async fn execute_run_subprocess(state: Arc<AppState>, run_id: RunId) {
         let message = "Worker stdin pipe was unavailable".to_string();
         tracing::error!(run_id = %run_id, "{message}");
         let _ = child.start_kill();
-        let _ = workflow_event::append_event(
-            &run_store,
-            &run_id,
-            &workflow_event::Event::WorkflowRunFailed {
-                error:          WorkflowError::engine(message.clone()),
-                duration_ms:    0,
-                reason:         FailureReason::LaunchFailed,
-                git_commit_sha: None,
-                final_patch:    None,
-                diff_summary:   None,
-            },
-        )
-        .await;
+        let failure_event = workflow_event::Event::workflow_run_failed_from_error(
+            &WorkflowError::engine(message.clone()),
+            0,
+            FailureReason::LaunchFailed,
+            None,
+            None,
+            None,
+            None,
+        );
+        let _ = workflow_event::append_event(&run_store, &run_id, &failure_event).await;
         fail_managed_run(&state, run_id, FailureReason::LaunchFailed, message);
         state.scheduler_notify.notify_one();
         return;
@@ -3257,19 +3245,16 @@ async fn execute_run_subprocess(state: Arc<AppState>, run_id: RunId) {
         let message = "Worker stderr pipe was unavailable".to_string();
         tracing::error!(run_id = %run_id, "{message}");
         let _ = child.start_kill();
-        let _ = workflow_event::append_event(
-            &run_store,
-            &run_id,
-            &workflow_event::Event::WorkflowRunFailed {
-                error:          WorkflowError::engine(message.clone()),
-                duration_ms:    0,
-                reason:         FailureReason::LaunchFailed,
-                git_commit_sha: None,
-                final_patch:    None,
-                diff_summary:   None,
-            },
-        )
-        .await;
+        let failure_event = workflow_event::Event::workflow_run_failed_from_error(
+            &WorkflowError::engine(message.clone()),
+            0,
+            FailureReason::LaunchFailed,
+            None,
+            None,
+            None,
+            None,
+        );
+        let _ = workflow_event::append_event(&run_store, &run_id, &failure_event).await;
         fail_managed_run(&state, run_id, FailureReason::LaunchFailed, message);
         state.scheduler_notify.notify_one();
         return;
@@ -3290,26 +3275,19 @@ async fn execute_run_subprocess(state: Arc<AppState>, run_id: RunId) {
         Ok(status) => status,
         Err(err) => {
             tracing::error!(run_id = %run_id, error = %err, "Failed while waiting on worker");
+            let message = format!("Worker wait failed: {err}");
             let _ = child.start_kill();
-            let _ = workflow_event::append_event(
-                &run_store,
-                &run_id,
-                &workflow_event::Event::WorkflowRunFailed {
-                    error:          WorkflowError::engine(err.to_string()),
-                    duration_ms:    0,
-                    reason:         FailureReason::Terminated,
-                    git_commit_sha: None,
-                    final_patch:    None,
-                    diff_summary:   None,
-                },
-            )
-            .await;
-            fail_managed_run(
-                &state,
-                run_id,
+            let failure_event = workflow_event::Event::workflow_run_failed_from_error(
+                &WorkflowError::engine_with_source("Worker wait failed", err),
+                0,
                 FailureReason::Terminated,
-                format!("Worker wait failed: {err}"),
+                None,
+                None,
+                None,
+                None,
             );
+            let _ = workflow_event::append_event(&run_store, &run_id, &failure_event).await;
+            fail_managed_run(&state, run_id, FailureReason::Terminated, message);
             state.scheduler_notify.notify_one();
             return;
         }
@@ -3382,7 +3360,12 @@ async fn execute_run_subprocess(state: Arc<AppState>, run_id: RunId) {
         managed_run.error = final_state
             .conclusion
             .as_ref()
-            .and_then(|conclusion| conclusion.failure_reason.clone())
+            .and_then(|conclusion| {
+                conclusion
+                    .failure
+                    .as_ref()
+                    .map(|failure| failure.message.clone())
+            })
             .or_else(|| managed_run.error.clone());
         managed_run.checkpoint = final_state.current_checkpoint().cloned();
         managed_run.run_dir = Some(run_dir);

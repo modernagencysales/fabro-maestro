@@ -101,8 +101,10 @@ When agents run inside Fabro workflows, the workflow engine manages tool approva
 
 For CLI-backed workflow agents, each provider handles auto-approval differently:
 - **Anthropic** (Claude Code) -- uses `--dangerously-skip-permissions` to bypass interactive prompts
-- **OpenAI** (Codex) -- uses `--full-auto` mode
+- **OpenAI** (Codex) -- uses `--dangerously-bypass-approvals-and-sandbox` and `--skip-git-repo-check` when Fabro owns the outer sandbox
 - **Gemini** -- uses `--yolo` flag
+
+Fabro treats that behavior as an explicit **external sandbox** runtime policy. It is appropriate when a workflow is already running inside a trusted Fabro isolation boundary, such as a Daytona VM, Docker sandbox, or a dedicated service container. It is not a substitute for isolation on an operator laptop; use `local` only for trusted workflows, and prefer `docker` or `daytona` for untrusted code or dependencies.
 
 ## Further reading
 

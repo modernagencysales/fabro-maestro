@@ -10,7 +10,8 @@ use fabro_acp::{
 use fabro_agent::{Sandbox, StaticEnvProvider, ToolEnvProvider};
 use fabro_auth::CredentialResolver;
 use fabro_graphviz::graph::Node;
-use fabro_model::Provider;
+use fabro_model::catalog::LlmCatalogSettings;
+use fabro_model::{Catalog, Provider};
 use fabro_util::time::elapsed_ms;
 use tokio_util::sync::CancellationToken;
 
@@ -27,6 +28,7 @@ pub struct AgentAcpBackend {
     tool_env: Option<Arc<dyn ToolEnvProvider>>,
     github_token_refresh_managed: bool,
     resolver: Option<CredentialResolver>,
+    catalog: Arc<Catalog>,
 }
 
 impl AgentAcpBackend {
@@ -38,6 +40,7 @@ impl AgentAcpBackend {
             tool_env: None,
             github_token_refresh_managed: false,
             resolver: Some(resolver),
+            catalog: default_catalog(),
         }
     }
 
@@ -49,6 +52,7 @@ impl AgentAcpBackend {
             tool_env: None,
             github_token_refresh_managed: false,
             resolver: None,
+            catalog: default_catalog(),
         }
     }
 
@@ -66,6 +70,12 @@ impl AgentAcpBackend {
     ) -> Self {
         self.tool_env = Some(provider);
         self.github_token_refresh_managed = github_token_refresh_managed;
+        self
+    }
+
+    #[must_use]
+    pub fn with_catalog(mut self, catalog: Arc<Catalog>) -> Self {
+        self.catalog = catalog;
         self
     }
 
@@ -90,6 +100,7 @@ impl AgentAcpBackend {
         let launch_env = resolve_agent_launch_env(AgentLaunchEnvRequest {
             provider,
             cli: AgentCli::for_provider(provider),
+            catalog: self.catalog.as_ref(),
             resolver: self.resolver.as_ref(),
             tool_env: self.tool_env.as_ref(),
             github_token_refresh_managed: self.github_token_refresh_managed,
@@ -198,6 +209,13 @@ impl AgentAcpBackend {
     }
 }
 
+fn default_catalog() -> Arc<Catalog> {
+    Arc::new(
+        Catalog::from_builtin_with_overrides(&LlmCatalogSettings::default())
+            .expect("default catalog should build"),
+    )
+}
+
 #[async_trait]
 impl CodergenBackend for AgentAcpBackend {
     async fn run(&self, request: CodergenRunRequest<'_>) -> Result<CodergenResult, Error> {
@@ -240,7 +258,7 @@ fn acp_command_error_to_workflow(error: AcpCommandError) -> Error {
             Error::handler("only stdio ACP commands are supported")
         }
         AcpCommandError::Parse(source) => {
-            Error::handler_with_source("Failed to resolve ACP command", &source)
+            Error::handler_with_source("Failed to resolve ACP command", source)
         }
     }
 }
@@ -258,8 +276,8 @@ fn acp_error_to_workflow(error: AcpError) -> Error {
         AcpError::StopReason { stop_reason, text } => {
             Error::handler(format!("ACP prompt stopped with {stop_reason}: {text}"))
         }
-        AcpError::Sandbox(source) => Error::handler_with_source("ACP turn failed", &source),
-        other => Error::handler_with_source("ACP turn failed", &other),
+        AcpError::Sandbox(source) => Error::handler_with_source("ACP turn failed", source),
+        other => Error::handler_with_source("ACP turn failed", other),
     }
 }
 

@@ -47,6 +47,9 @@ working_dir = "/tmp/workdir"
 name = "claude-sonnet-4-5"
 fallbacks = ["openai", "gemini"]
 
+[run.model.controls]
+reasoning_effort = "high"
+
 [[run.prepare.steps]]
 script = "git clone https://github.com/fabro-sh/fabro repo"
 
@@ -127,6 +130,27 @@ name = "claude-sonnet-4-5"
 | `provider` | Provider name (optional — auto-inferred from the model catalog). Only needed for models not in the catalog or to force a specific provider. |
 | `fallbacks` | Ordered list of model references to try when the primary is unavailable. Entries can be bare provider tokens (`"openai"`), bare model aliases, or qualified `"provider/model"` references. |
 
+Provider values are catalog provider ID strings. Built-in IDs like `anthropic` and `openai` work, and settings-defined IDs like `proxy` work after they are added under `[llm.providers.<id>]`.
+
+#### `[run.model.controls]`
+
+Set default model controls for all nodes that do not override them in the workflow stylesheet:
+
+```toml title="run.toml"
+[run.model]
+provider = "proxy"
+name = "team-code"
+
+[run.model.controls]
+reasoning_effort = "high"
+speed = "fast"
+```
+
+| Field | Description |
+|---|---|
+| `reasoning_effort` | Native reasoning-effort value to request when the selected model allows it, such as `"low"`, `"medium"`, `"high"`, `"xhigh"`, or `"max"`. |
+| `speed` | Native speed value to request when the selected model declares it, such as `"fast"`. The standard speed is implicit and does not need to be set. |
+
 #### Fallbacks with splice
 
 Use the reserved `"..."` marker in `fallbacks` to splice in the inherited list from lower-precedence layers:
@@ -157,6 +181,47 @@ script = "npm install"
 
 Each step must exit with status 0. If any step fails, the run aborts before the workflow starts. Prepare steps replace across layers — the higher-precedence layer wins wholesale.
 
+### `[run.clone]`
+
+Configure whether clone-based sandboxes clone the run's GitHub origin before execution.
+
+```toml title="run.toml"
+[run.clone]
+enabled = true
+```
+
+Set `enabled = false` to start Docker and Daytona runs with an empty provider workspace. Use [prepare steps](#runprepare) to clone or create any files the workflow needs.
+
+### `[run.run_branch]`
+
+Configure Fabro's managed `fabro/run/<id>` checkpoint branch.
+
+```toml title="run.toml"
+[run.run_branch]
+enabled = true
+push = true
+```
+
+| Field | Description |
+|---|---|
+| `enabled` | When `false`, Fabro does not create the managed run branch or checkpoint commits. This also disables metadata branch writes. |
+| `push` | When `false`, Fabro creates local checkpoint commits but does not push `fabro/run/<id>` to the remote. |
+
+### `[run.meta_branch]`
+
+Configure Fabro's managed `fabro/meta/<id>` metadata branch.
+
+```toml title="run.toml"
+[run.meta_branch]
+enabled = true
+push = true
+```
+
+| Field | Description |
+|---|---|
+| `enabled` | When `false`, Fabro skips metadata branch snapshots. |
+| `push` | When `false`, Fabro writes metadata snapshots locally but does not push `fabro/meta/<id>` to the remote. |
+
 ### `[run.sandbox]`
 
 Configure how agent tools (bash, file edits) are executed.
@@ -186,7 +251,6 @@ image = "buildpack-deps:noble"
 network_mode = "bridge"
 memory_limit = "4GB"
 cpu_quota = 200000
-skip_clone = false
 ```
 
 | Field | Description |
@@ -196,7 +260,6 @@ skip_clone = false
 | `memory_limit` | Memory limit using human-readable units such as `"4GB"` or `"512MiB"`. |
 | `cpu_quota` | Docker CPU quota in microseconds per 100ms period. Defaults to `200000`. |
 | `env_vars` | Provider-level environment variables passed to the Docker container. For workflow tool execution, prefer `[run.sandbox.env]`. |
-| `skip_clone` | When `true`, start with an empty container workspace instead of cloning the run's GitHub origin. |
 
 #### `[run.sandbox.daytona]`
 
@@ -230,7 +293,6 @@ dockerfile = "FROM rust:1.85-slim-bookworm\nRUN apt-get update"
 | `snapshot.disk` | Disk size using the same units as `memory`. |
 | `snapshot.dockerfile` | Dockerfile content (inline string) or path (`{ path = "..." }`) for building the snapshot image. Paths are resolved relative to the TOML file's directory. |
 | `network` | Network access mode: `"allow_all"` (default), `"block"`, or `{ allow_list = ["..."] }`. See [Sandboxing](/administration/sandboxing#network-access-control). |
-| `skip_clone` | When `true`, start with an empty Daytona workspace instead of cloning the run's GitHub origin. |
 
 #### Local sandbox
 

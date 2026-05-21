@@ -14,9 +14,8 @@ use fabro_config::{
 };
 use fabro_graphviz::graph::{Graph, is_llm_handler_type};
 use fabro_graphviz::render::apply_direction;
-use fabro_llm::Provider;
 use fabro_llm::model_test::{ModelTestStatus, run_basic_model_probe};
-use fabro_model::Catalog;
+use fabro_model::{Catalog, ProviderId};
 use fabro_sandbox::config::{
     DaytonaNetwork, DaytonaSnapshotSettings, DockerfileSource as SandboxDockerfileSource,
 };
@@ -33,7 +32,9 @@ use fabro_types::settings::run::{
 use fabro_types::{RunId, WorkflowSettings};
 use fabro_util::check_report::{CheckDetail, CheckReport, CheckResult, CheckSection, CheckStatus};
 use fabro_validate::Severity;
-use fabro_workflow::operations::{CreateRunInput, ValidateInput, WorkflowInput, validate};
+use fabro_workflow::operations::{
+    CreateRunInput, RenderMode, ValidateInput, WorkflowInput, validate,
+};
 use fabro_workflow::pipeline::Validated;
 use fabro_workflow::run_materialization::materialize_run;
 use fabro_workflow::workflow_bundle::{BundledWorkflow, ParsedWorkflowConfig, WorkflowBundle};
@@ -109,7 +110,16 @@ pub(crate) fn prepare_manifest(
         .filter(|config| config.type_ == types::ManifestConfigType::Project)
     {
         if let Some(source) = config.source.as_deref() {
-            workflow_settings_builder = workflow_settings_builder.project_toml(source)?;
+            let mut run = parse_run_layer_from_settings_toml(source)
+                .context("Failed to parse project config TOML")?;
+            if run_has_path_dockerfile(&run) {
+                let config_path = manifest_project_config_path(config, &cwd)?;
+                resolve_manifest_dockerfile(&mut run, &config_path, &workflow_input.files)?;
+                workflow_settings_builder =
+                    workflow_settings_builder.project_toml_with_run_layer(source, run)?;
+            } else {
+                workflow_settings_builder = workflow_settings_builder.project_toml(source)?;
+            }
         }
     }
     for config in manifest
@@ -155,18 +165,22 @@ pub(crate) fn prepare_manifest(
 
 pub(crate) fn validate_prepared_manifest(
     prepared: &PreparedManifest,
+    mode: RenderMode,
+    catalog: Arc<Catalog>,
 ) -> Result<Validated, WorkflowError> {
     validate(ValidateInput {
-        workflow:          WorkflowInput::Bundled(prepared.workflow_input.clone()),
-        settings:          prepared.settings.clone(),
-        cwd:               prepared.cwd.clone(),
+        workflow: WorkflowInput::Bundled(prepared.workflow_input.clone()),
+        settings: prepared.settings.clone(),
+        cwd: prepared.cwd.clone(),
         custom_transforms: Vec::new(),
+        catalog,
+        mode,
     })
 }
 
 pub(crate) fn create_run_input(
     prepared: PreparedManifest,
-    configured_providers: Vec<Provider>,
+    configured_providers: Vec<ProviderId>,
     web_url: Option<String>,
 ) -> CreateRunInput {
     CreateRunInput {
@@ -412,6 +426,34 @@ fn resolve_manifest_dockerfile(
     Ok(())
 }
 
+fn run_has_path_dockerfile(run: &RunLayer) -> bool {
+    matches!(
+        run.sandbox
+            .as_ref()
+            .and_then(|sandbox| sandbox.daytona.as_ref())
+            .and_then(|daytona| daytona.snapshot.as_ref())
+            .and_then(|snapshot| snapshot.dockerfile.as_ref()),
+        Some(DaytonaDockerfileLayer::Path { .. })
+    )
+}
+
+fn manifest_project_config_path(
+    config: &types::ManifestConfig,
+    cwd: &Path,
+) -> Result<ManifestPath> {
+    let path = config
+        .path
+        .as_deref()
+        .ok_or_else(|| anyhow!("invalid manifest project config path: missing path"))?;
+    let path_ref = Path::new(path);
+    let manifest_path = if path_ref.is_absolute() {
+        ManifestPath::from_absolute(path_ref, cwd)
+    } else {
+        ManifestPath::from_wire(path)
+    };
+    manifest_path.ok_or_else(|| anyhow!("invalid manifest project config path: {path}"))
+}
+
 async fn build_preflight_report(
     state: &AppState,
     prepared: &PreparedManifest,
@@ -432,11 +474,15 @@ async fn build_preflight_report(
         ));
     }
 
-    let configured_providers = state.llm_source.configured_providers().await;
+    let catalog = state.catalog();
+    let configured_providers = state
+        .llm_source
+        .configured_providers(catalog.as_ref())
+        .await;
     let materialized = materialize_run(
         prepared.settings.clone(),
         graph,
-        Catalog::builtin(),
+        catalog.as_ref(),
         &configured_providers,
     );
     let resolved_run = materialized.run;
@@ -483,6 +529,7 @@ async fn build_preflight_report(
         graph,
         &resolved_run,
         &configured_providers,
+        catalog.as_ref(),
     )
     .await;
     run_github_token_check(&mut checks, prepared, &resolved_run, github_app).await;
@@ -564,16 +611,26 @@ fn resolve_sandbox_provider(settings: &RunNamespace) -> Result<SandboxProvider> 
     .unwrap_or_default())
 }
 
-fn resolve_daytona_config(settings: &RunNamespace) -> Option<DaytonaConfig> {
-    settings
+fn resolve_daytona_config(settings: &RunNamespace) -> DaytonaConfig {
+    let mut config = settings
         .sandbox
         .daytona
         .as_ref()
-        .map(runtime_daytona_config)
+        .map(|daytona| runtime_daytona_config(daytona, !settings.clone.enabled))
+        .unwrap_or_default();
+    config.skip_clone = !settings.clone.enabled;
+    config
 }
 
-fn resolve_docker_config(settings: &RunNamespace) -> Option<DockerSandboxOptions> {
-    settings.sandbox.docker.as_ref().map(runtime_docker_config)
+fn resolve_docker_config(settings: &RunNamespace) -> DockerSandboxOptions {
+    let mut config = settings
+        .sandbox
+        .docker
+        .as_ref()
+        .map(|docker| runtime_docker_config(docker, !settings.clone.enabled))
+        .unwrap_or_default();
+    config.skip_clone = !settings.clone.enabled;
+    config
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -584,16 +641,7 @@ struct GitRemoteRefCheck {
 
 fn clone_disabled_for_provider(provider: SandboxProvider, resolved_run: &RunNamespace) -> bool {
     match provider {
-        SandboxProvider::Docker => resolved_run
-            .sandbox
-            .docker
-            .as_ref()
-            .is_some_and(|docker| docker.skip_clone),
-        SandboxProvider::Daytona => resolved_run
-            .sandbox
-            .daytona
-            .as_ref()
-            .is_some_and(|daytona| daytona.skip_clone),
+        SandboxProvider::Docker | SandboxProvider::Daytona => !resolved_run.clone.enabled,
         SandboxProvider::Local => false,
     }
 }
@@ -759,7 +807,7 @@ fn preflight_sandbox_spec(
             working_directory: prepared.source_directory.clone(),
         },
         SandboxProvider::Docker => {
-            let mut config = resolve_docker_config(resolved_run).unwrap_or_default();
+            let mut config = resolve_docker_config(resolved_run);
             config.skip_clone = true;
             SandboxSpec::Docker {
                 config,
@@ -770,7 +818,7 @@ fn preflight_sandbox_spec(
             }
         }
         SandboxProvider::Daytona => {
-            let mut config = resolve_daytona_config(resolved_run).unwrap_or_default();
+            let mut config = resolve_daytona_config(resolved_run);
             config.skip_clone = true;
             SandboxSpec::Daytona {
                 config: Box::new(config),
@@ -875,7 +923,6 @@ struct PendingModelProbe {
     index:         usize,
     model_id:      String,
     provider_name: String,
-    provider:      Provider,
 }
 
 async fn run_llm_check(
@@ -883,9 +930,10 @@ async fn run_llm_check(
     checks: &mut Vec<CheckResult>,
     graph: &Graph,
     settings: &RunNamespace,
-    configured_providers: &[Provider],
+    configured_providers: &[ProviderId],
+    catalog: &Catalog,
 ) -> bool {
-    let (model, provider) = resolve_model_provider(settings, graph, configured_providers);
+    let (model, provider) = resolve_model_provider(settings, graph, configured_providers, catalog);
     let default_provider = provider.as_deref().unwrap_or("anthropic");
 
     match state.resolve_llm_client().await {
@@ -909,7 +957,7 @@ async fn run_llm_check(
                 let node_model = node.model().unwrap_or(&model);
                 let node_provider = node.provider().unwrap_or(default_provider);
                 let (resolved_model, resolved_provider) =
-                    if let Some(info) = Catalog::builtin().get(node_model) {
+                    if let Some(info) = catalog.get(node_model) {
                         (info.id.clone(), info.provider.to_string())
                     } else {
                         (node_model.to_string(), node_provider.to_string())
@@ -927,12 +975,11 @@ async fn run_llm_check(
             }
 
             if model_providers.is_empty() {
-                let (resolved_model, resolved_provider) =
-                    if let Some(info) = Catalog::builtin().get(&model) {
-                        (info.id.clone(), info.provider.to_string())
-                    } else {
-                        (model.clone(), default_provider.to_string())
-                    };
+                let (resolved_model, resolved_provider) = if let Some(info) = catalog.get(&model) {
+                    (info.id.clone(), info.provider.to_string())
+                } else {
+                    (model.clone(), default_provider.to_string())
+                };
                 model_providers.insert((resolved_model, resolved_provider));
             }
 
@@ -940,58 +987,36 @@ async fn run_llm_check(
             let mut completed_checks: Vec<(usize, CheckResult)> = Vec::new();
             let mut pending_probes = Vec::new();
             for (index, (model_id, provider_name)) in model_providers.iter().enumerate() {
-                match provider_name.parse::<Provider>() {
-                    Ok(provider) => {
-                        if let Some((_, issue)) = auth_issues
-                            .iter()
-                            .find(|(candidate, _)| *candidate == provider)
-                        {
-                            all_ok = false;
-                            completed_checks.push((index, CheckResult {
-                                name:        "LLM".into(),
-                                status:      CheckStatus::Warning,
-                                summary:     model_id.clone(),
-                                details:     vec![CheckDetail::new(format!(
-                                    "Provider: {provider_name}"
-                                ))],
-                                remediation: Some(auth_issue_message(provider, issue)),
-                            }));
-                        } else if !configured.iter().any(|name| name == provider_name) {
-                            all_ok = false;
-                            completed_checks.push((index, CheckResult {
-                                name:        "LLM".into(),
-                                status:      CheckStatus::Warning,
-                                summary:     model_id.clone(),
-                                details:     vec![CheckDetail::new(format!(
-                                    "Provider: {provider_name}"
-                                ))],
-                                remediation: Some(format!(
-                                    "Provider \"{provider_name}\" is not configured"
-                                )),
-                            }));
-                        } else {
-                            pending_probes.push(PendingModelProbe {
-                                index,
-                                model_id: model_id.clone(),
-                                provider_name: provider_name.clone(),
-                                provider,
-                            });
-                        }
-                    }
-                    Err(err) => {
-                        all_ok = false;
-                        completed_checks.push((index, CheckResult {
-                            name:        "LLM".into(),
-                            status:      CheckStatus::Error,
-                            summary:     model_id.clone(),
-                            details:     vec![CheckDetail::new(format!(
-                                "Provider: {provider_name}"
-                            ))],
-                            remediation: Some(format!(
-                                "Invalid provider \"{provider_name}\": {err}"
-                            )),
-                        }));
-                    }
+                let provider_id = ProviderId::from(provider_name.as_str());
+                if let Some((_, issue)) = auth_issues
+                    .iter()
+                    .find(|(candidate, _)| candidate == &provider_id)
+                {
+                    all_ok = false;
+                    completed_checks.push((index, CheckResult {
+                        name:        "LLM".into(),
+                        status:      CheckStatus::Warning,
+                        summary:     model_id.clone(),
+                        details:     vec![CheckDetail::new(format!("Provider: {provider_name}"))],
+                        remediation: Some(auth_issue_message(&provider_id, issue)),
+                    }));
+                } else if !configured.iter().any(|name| name == provider_name) {
+                    all_ok = false;
+                    completed_checks.push((index, CheckResult {
+                        name:        "LLM".into(),
+                        status:      CheckStatus::Warning,
+                        summary:     model_id.clone(),
+                        details:     vec![CheckDetail::new(format!("Provider: {provider_name}"))],
+                        remediation: Some(format!(
+                            "Provider \"{provider_name}\" is not configured"
+                        )),
+                    }));
+                } else {
+                    pending_probes.push(PendingModelProbe {
+                        index,
+                        model_id: model_id.clone(),
+                        provider_name: provider_name.clone(),
+                    });
                 }
             }
 
@@ -1000,7 +1025,8 @@ async fn run_llm_check(
                     let client = Arc::clone(&client);
                     async move {
                         let outcome =
-                            run_basic_model_probe(&probe.model_id, probe.provider, client).await;
+                            run_basic_model_probe(&probe.model_id, &probe.provider_name, client)
+                                .await;
                         let (status, remediation) = if outcome.status == ModelTestStatus::Ok {
                             (CheckStatus::Pass, None)
                         } else {
@@ -1057,7 +1083,8 @@ async fn run_llm_check(
 fn resolve_model_provider(
     settings: &RunNamespace,
     _graph: &Graph,
-    configured_providers: &[Provider],
+    configured_providers: &[ProviderId],
+    catalog: &Catalog,
 ) -> (String, Option<String>) {
     let provider = settings
         .model
@@ -1066,15 +1093,15 @@ fn resolve_model_provider(
         .map(InterpString::as_source);
     let model = settings.model.name.as_ref().map_or_else(
         || {
-            Catalog::builtin()
-                .default_for_configured(configured_providers)
+            catalog
+                .default_for_configured_ids(configured_providers)
                 .id
                 .clone()
         },
         InterpString::as_source,
     );
 
-    match Catalog::builtin().get(&model) {
+    match catalog.get(&model) {
         Some(info) => (
             info.id.clone(),
             provider.or(Some(info.provider.to_string())),
@@ -1083,11 +1110,11 @@ fn resolve_model_provider(
     }
 }
 
-fn runtime_daytona_config(settings: &DaytonaSettings) -> DaytonaConfig {
+fn runtime_daytona_config(settings: &DaytonaSettings, skip_clone: bool) -> DaytonaConfig {
     DaytonaConfig {
         auto_stop_interval: settings.auto_stop_interval,
-        labels:             (!settings.labels.is_empty()).then_some(settings.labels.clone()),
-        snapshot:           settings
+        labels: (!settings.labels.is_empty()).then_some(settings.labels.clone()),
+        snapshot: settings
             .snapshot
             .as_ref()
             .map(|snapshot| DaytonaSnapshotSettings {
@@ -1107,18 +1134,18 @@ fn runtime_daytona_config(settings: &DaytonaSettings) -> DaytonaConfig {
                         }
                     }),
             }),
-        network:            settings.network.as_ref().map(|network| match network {
+        network: settings.network.as_ref().map(|network| match network {
             DaytonaNetworkLayer::Block => DaytonaNetwork::Block,
             DaytonaNetworkLayer::AllowAll => DaytonaNetwork::AllowAll,
             DaytonaNetworkLayer::AllowList { allow_list } => {
                 DaytonaNetwork::AllowList(allow_list.clone())
             }
         }),
-        skip_clone:         settings.skip_clone,
+        skip_clone,
     }
 }
 
-fn runtime_docker_config(settings: &DockerSettings) -> DockerSandboxOptions {
+fn runtime_docker_config(settings: &DockerSettings, skip_clone: bool) -> DockerSandboxOptions {
     let mut env_vars = settings
         .env_vars
         .iter()
@@ -1132,7 +1159,7 @@ fn runtime_docker_config(settings: &DockerSettings) -> DockerSandboxOptions {
         memory_limit: settings.memory_limit,
         cpu_quota: settings.cpu_quota,
         env_vars,
-        skip_clone: settings.skip_clone,
+        skip_clone,
         ..DockerSandboxOptions::default()
     }
 }
@@ -1293,6 +1320,9 @@ fn report_to_api(report: &CheckReport) -> types::PreflightCheckReport {
 
 #[cfg(test)]
 mod tests {
+    use fabro_model::Provider;
+    use fabro_model::catalog::LlmCatalogSettings;
+
     use super::*;
 
     fn minimal_manifest() -> types::RunManifest {
@@ -1345,6 +1375,10 @@ mod tests {
         RunLayer::default()
     }
 
+    fn test_catalog() -> Arc<Catalog> {
+        Arc::new(Catalog::from_builtin_with_overrides(&LlmCatalogSettings::default()).unwrap())
+    }
+
     fn manifest_workflow() -> types::ManifestWorkflow {
         types::ManifestWorkflow {
             config: None,
@@ -1377,7 +1411,7 @@ mod tests {
 
     fn prepared_and_resolved_for_sandbox(
         provider: SandboxProvider,
-        skip_clone: bool,
+        clone_enabled: bool,
         git: Option<types::GitContext>,
     ) -> (PreparedManifest, RunNamespace) {
         let mut manifest = minimal_manifest();
@@ -1391,8 +1425,8 @@ _version = 1
 [run.sandbox]
 provider = "{provider}"
 
-[run.sandbox.{provider}]
-skip_clone = {skip_clone}
+[run.clone]
+enabled = {clone_enabled}
 "#
             )),
             type_:  types::ManifestConfigType::Project,
@@ -1403,23 +1437,110 @@ skip_clone = {skip_clone}
             &manifest,
         )
         .unwrap();
-        let validated = validate_prepared_manifest(&prepared).unwrap();
+        let validated =
+            validate_prepared_manifest(&prepared, RenderMode::Strict, test_catalog()).unwrap();
         let resolved = materialize_run(
             prepared.settings.clone(),
             validated.graph(),
             Catalog::builtin(),
-            &[Provider::Anthropic],
+            &[Provider::Anthropic.id()],
         )
         .run;
 
         (prepared, resolved)
     }
 
+    #[test]
+    fn prepare_manifest_inlines_project_config_daytona_dockerfile_from_bundle() {
+        let mut manifest = minimal_manifest();
+        manifest.configs.push(types::ManifestConfig {
+            path:   Some(".fabro/project.toml".to_string()),
+            source: Some(
+                r#"_version = 1
+
+[run.sandbox]
+provider = "daytona"
+
+[run.sandbox.daytona.snapshot]
+name = "fabro-test"
+dockerfile = { path = "Dockerfile" }
+"#
+                .to_string(),
+            ),
+            type_:  types::ManifestConfigType::Project,
+        });
+        manifest
+            .workflows
+            .get_mut("workflow.fabro")
+            .unwrap()
+            .files
+            .insert(".fabro/Dockerfile".to_string(), types::ManifestFileEntry {
+                content: "FROM ubuntu:24.04\n".to_string(),
+                ref_:    types::ManifestFileRef {
+                    from:     Some(".fabro/project.toml".to_string()),
+                    original: "Dockerfile".to_string(),
+                    type_:    types::ManifestFileRefType::Dockerfile,
+                },
+            });
+
+        let prepared = prepare_manifest(
+            &manifest_run_defaults(Some(&default_settings_fixture())),
+            &manifest,
+        )
+        .unwrap();
+
+        let dockerfile = prepared
+            .settings
+            .run
+            .sandbox
+            .daytona
+            .as_ref()
+            .and_then(|daytona| daytona.snapshot.as_ref())
+            .and_then(|snapshot| snapshot.dockerfile.as_ref())
+            .expect("project Dockerfile should resolve");
+        match dockerfile {
+            DockerfileSource::Inline(value) => assert_eq!(value, "FROM ubuntu:24.04\n"),
+            DockerfileSource::Path { path } => {
+                panic!("project Dockerfile should be inline, got path {path}")
+            }
+        }
+    }
+
+    #[test]
+    fn prepare_manifest_errors_when_project_config_dockerfile_bundle_is_missing() {
+        let mut manifest = minimal_manifest();
+        manifest.configs.push(types::ManifestConfig {
+            path:   Some(".fabro/project.toml".to_string()),
+            source: Some(
+                r#"_version = 1
+
+[run.sandbox.daytona.snapshot]
+name = "fabro-test"
+dockerfile = { path = "Dockerfile" }
+"#
+                .to_string(),
+            ),
+            type_:  types::ManifestConfigType::Project,
+        });
+
+        let Err(err) = prepare_manifest(
+            &manifest_run_defaults(Some(&default_settings_fixture())),
+            &manifest,
+        ) else {
+            panic!("missing bundled Dockerfile should fail");
+        };
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("missing bundled dockerfile"),
+            "expected missing bundled dockerfile error, got: {message}"
+        );
+    }
+
     #[tokio::test]
     async fn repository_access_check_skips_when_clone_is_disabled() {
         let (prepared, resolved) = prepared_and_resolved_for_sandbox(
             SandboxProvider::Docker,
-            true,
+            false,
             Some(git_context("https://github.com/acme/widgets", "main")),
         );
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1448,7 +1569,7 @@ skip_clone = {skip_clone}
     async fn repository_access_check_rejects_non_github_origins_before_remote_probe() {
         let (prepared, resolved) = prepared_and_resolved_for_sandbox(
             SandboxProvider::Docker,
-            false,
+            true,
             Some(git_context("https://gitlab.com/acme/widgets", "main")),
         );
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1486,7 +1607,7 @@ skip_clone = {skip_clone}
     async fn repository_access_check_probes_normalized_github_branch() {
         let (prepared, resolved) = prepared_and_resolved_for_sandbox(
             SandboxProvider::Docker,
-            false,
+            true,
             Some(git_context(
                 "git@github.com:acme/widgets.git",
                 "feature/demo",
@@ -1523,7 +1644,7 @@ skip_clone = {skip_clone}
     async fn repository_access_check_surfaces_remote_probe_failure() {
         let (prepared, resolved) = prepared_and_resolved_for_sandbox(
             SandboxProvider::Docker,
-            false,
+            true,
             Some(git_context("https://github.com/acme/widgets", "missing")),
         );
         let mut checks = Vec::new();
@@ -1555,7 +1676,7 @@ skip_clone = {skip_clone}
     fn preflight_sandbox_spec_disables_docker_clone_but_preserves_clone_metadata() {
         let (prepared, resolved) = prepared_and_resolved_for_sandbox(
             SandboxProvider::Docker,
-            false,
+            true,
             Some(git_context("https://github.com/acme/widgets", "main")),
         );
 
@@ -1782,7 +1903,8 @@ app_id = "fixture-app-id"
             &invalid_manifest(),
         )
         .unwrap();
-        let validated = validate_prepared_manifest(&prepared).unwrap();
+        let validated =
+            validate_prepared_manifest(&prepared, RenderMode::Strict, test_catalog()).unwrap();
 
         assert!(validated.has_errors());
 
@@ -1827,7 +1949,8 @@ issues = "read"
             &manifest,
         )
         .unwrap();
-        let validated = validate_prepared_manifest(&prepared).unwrap();
+        let validated =
+            validate_prepared_manifest(&prepared, RenderMode::Strict, test_catalog()).unwrap();
         assert!(!validated.has_errors());
 
         let (response, _ok) = run_preflight(state.as_ref(), &prepared, &validated)
@@ -1875,7 +1998,8 @@ provider = "local"
             &manifest,
         )
         .unwrap();
-        let validated = validate_prepared_manifest(&prepared).unwrap();
+        let validated =
+            validate_prepared_manifest(&prepared, RenderMode::Strict, test_catalog()).unwrap();
 
         assert!(!validated.has_errors());
 
@@ -1916,7 +2040,8 @@ provider = "daytona"
             &manifest,
         )
         .unwrap();
-        let validated = validate_prepared_manifest(&prepared).unwrap();
+        let validated =
+            validate_prepared_manifest(&prepared, RenderMode::Strict, test_catalog()).unwrap();
 
         let (response, _ok) = run_preflight(state.as_ref(), &prepared, &validated)
             .await
@@ -1963,7 +2088,7 @@ provider = "daytona"
             .set(
                 "openai",
                 &serde_json::to_string(&fabro_auth::AuthCredential {
-                    provider: Provider::OpenAi,
+                    provider: Provider::OpenAi.id(),
                     details:  fabro_auth::AuthDetails::ApiKey {
                         key: "test-openai-key".to_string(),
                     },
@@ -1989,7 +2114,8 @@ digraph Demo {
             &manifest,
         )
         .unwrap();
-        let validated = validate_prepared_manifest(&prepared).unwrap();
+        let validated =
+            validate_prepared_manifest(&prepared, RenderMode::Strict, test_catalog()).unwrap();
 
         let (response, ok) = run_preflight(state.as_ref(), &prepared, &validated)
             .await
@@ -2010,6 +2136,122 @@ digraph Demo {
                 .contains("Rate limited by openai: quota limited")
         );
         assert!(response_mock.calls_async().await >= 1);
+    }
+
+    #[tokio::test]
+    async fn preflight_unknown_llm_provider_reports_not_configured() {
+        let state = crate::test_support::test_app_state();
+        let mut manifest = minimal_manifest();
+        manifest.workflows.get_mut("workflow.fabro").unwrap().source = r#"
+digraph Demo {
+    start [shape=Mdiamond]
+    exit  [shape=Msquare]
+    work  [prompt="Do work", model="venice-model", provider="venice"]
+    start -> work -> exit
+}
+"#
+        .to_string();
+        let prepared = prepare_manifest(
+            &manifest_run_defaults(Some(&default_settings_fixture())),
+            &manifest,
+        )
+        .unwrap();
+        let validated =
+            validate_prepared_manifest(&prepared, RenderMode::Strict, test_catalog()).unwrap();
+
+        let (response, ok) = run_preflight(state.as_ref(), &prepared, &validated)
+            .await
+            .unwrap();
+
+        assert!(!ok);
+        let llm_check = response.checks.sections[0]
+            .checks
+            .iter()
+            .find(|check| check.name == "LLM" && check.summary == "venice-model")
+            .expect("preflight should include the requested custom LLM provider");
+        assert_eq!(llm_check.status, types::PreflightCheckResultStatus::Warning);
+        assert_eq!(
+            llm_check.remediation.as_deref(),
+            Some("Provider \"venice\" is not configured")
+        );
+        assert!(
+            llm_check
+                .details
+                .iter()
+                .any(|detail| detail.text == "Provider: venice")
+        );
+    }
+
+    #[tokio::test]
+    async fn preflight_resolves_model_aliases_from_app_state_catalog() {
+        let llm_catalog_settings: fabro_model::catalog::LlmCatalogSettings = toml::from_str(
+            r#"
+[providers.venice]
+display_name = "Venice"
+adapter = "openai_compatible"
+base_url = "https://api.venice.ai/api/v1"
+credentials = ["env:VENICE_API_KEY"]
+
+[models."venice-large"]
+provider = "venice"
+display_name = "Venice Large"
+family = "venice"
+default = true
+aliases = ["vl"]
+
+[models."venice-large".limits]
+context_window = 128000
+
+[models."venice-large".features]
+tools = true
+vision = false
+reasoning = false
+effort = false
+"#,
+        )
+        .expect("catalog fixture should parse");
+        let state = crate::test_support::TestAppStateBuilder::new()
+            .llm_catalog_settings(llm_catalog_settings)
+            .build();
+        let mut manifest = minimal_manifest();
+        manifest.workflows.get_mut("workflow.fabro").unwrap().source = r#"
+digraph Demo {
+    start [shape=Mdiamond]
+    exit  [shape=Msquare]
+    work  [prompt="Do work", model="vl"]
+    start -> work -> exit
+}
+"#
+        .to_string();
+        let prepared = prepare_manifest(
+            &manifest_run_defaults(Some(&default_settings_fixture())),
+            &manifest,
+        )
+        .unwrap();
+        let validated =
+            validate_prepared_manifest(&prepared, RenderMode::Strict, test_catalog()).unwrap();
+
+        let (response, ok) = run_preflight(state.as_ref(), &prepared, &validated)
+            .await
+            .unwrap();
+
+        assert!(!ok);
+        let llm_check = response.checks.sections[0]
+            .checks
+            .iter()
+            .find(|check| check.name == "LLM" && check.summary == "venice-large")
+            .expect("preflight should resolve the catalog alias");
+        assert_eq!(llm_check.status, types::PreflightCheckResultStatus::Warning);
+        assert_eq!(
+            llm_check.remediation.as_deref(),
+            Some("Provider \"venice\" is not configured")
+        );
+        assert!(
+            llm_check
+                .details
+                .iter()
+                .any(|detail| detail.text == "Provider: venice")
+        );
     }
 
     mod root_workflow_run_layer_tests {

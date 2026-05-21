@@ -6,6 +6,8 @@ use fabro_graphviz::parser;
 use fabro_llm::client::Client;
 use fabro_llm::generate::{GenerateParams, generate_object};
 use fabro_model::Catalog;
+#[cfg(test)]
+use fabro_model::catalog::LlmCatalogSettings;
 use fabro_store::RunProjection;
 use fabro_types::PullRequestRecord;
 use fabro_types::settings::run::MergeStrategy;
@@ -66,8 +68,8 @@ const UNKNOWN_MODEL_CTX: usize = 200_000;
 
 /// Resolve truncation caps based on the model's context window. Unknown
 /// models use the baseline 200k context-window assumption.
-fn truncation_caps(model: &str) -> TruncationCaps {
-    let ctx = Catalog::builtin()
+fn truncation_caps(model: &str, catalog: &Catalog) -> TruncationCaps {
+    let ctx = catalog
         .get(model)
         .and_then(|m| usize::try_from(m.context_window()).ok())
         .unwrap_or(UNKNOWN_MODEL_CTX);
@@ -345,10 +347,11 @@ pub async fn build_pr_content(
     model: &str,
     run_store: &RunStoreHandle,
     llm_source: &dyn CredentialSource,
+    catalog: Arc<Catalog>,
     conclusion: Option<&Conclusion>,
     run_state: Option<&RunProjection>,
 ) -> Result<PrContent, String> {
-    let client = Client::from_source(llm_source)
+    let client = Client::from_source(llm_source, Arc::clone(&catalog))
         .await
         .map_err(|e| format!("Failed to create LLM client: {e}"))?;
 
@@ -357,6 +360,7 @@ pub async fn build_pr_content(
         goal,
         model,
         run_store,
+        catalog.as_ref(),
         conclusion,
         run_state,
         Arc::new(client),
@@ -369,6 +373,7 @@ async fn build_pr_content_with_client(
     goal: &str,
     model: &str,
     run_store: &RunStoreHandle,
+    catalog: &Catalog,
     conclusion: Option<&Conclusion>,
     run_state: Option<&RunProjection>,
     client: Arc<Client>,
@@ -392,7 +397,7 @@ async fn build_pr_content_with_client(
     let run_spec = run_state.map(|state| state.spec.clone());
     let dot_source = run_state.and_then(|state| state.spec.graph_source.clone());
 
-    let caps = truncation_caps(model);
+    let caps = truncation_caps(model, catalog);
     let truncated_diff = truncate_chars(diff, caps.diff);
 
     let prompt = if let Some(ref plan) = plan_text {
@@ -462,6 +467,7 @@ pub struct OpenPullRequestRequest<'a> {
     pub auto_merge:  Option<AutoMergeOptions>,
     pub run_store:   &'a RunStoreHandle,
     pub llm_source:  &'a dyn CredentialSource,
+    pub catalog:     Arc<Catalog>,
     pub conclusion:  Option<&'a Conclusion>,
     pub run_state:   Option<&'a RunProjection>,
 }
@@ -488,6 +494,7 @@ pub async fn maybe_open_pull_request(
         req.model,
         req.run_store,
         req.llm_source,
+        Arc::clone(&req.catalog),
         req.conclusion,
         req.run_state,
     )
@@ -602,6 +609,7 @@ pub async fn pull_request(concluded: Concluded, options: &PullRequestOptions) ->
                         auto_merge,
                         run_store: &services.run_store,
                         llm_source: services.llm_source.as_ref(),
+                        catalog: Arc::clone(&services.catalog),
                         conclusion: Some(&conclusion),
                         run_state: None,
                     })
@@ -634,7 +642,13 @@ pub async fn pull_request(concluded: Concluded, options: &PullRequestOptions) ->
         run_id: run_options.run_id,
         outcome,
         conclusion,
-        pushed_branch: run_options.run_branch().map(str::to_string),
+        pushed_branch: run_options
+            .settings
+            .run
+            .run_branch
+            .push
+            .then(|| run_options.run_branch().map(str::to_string))
+            .flatten(),
         pr_url,
     }
 }
@@ -665,10 +679,14 @@ mod tests {
     use httpmock::MockServer;
     use object_store::memory::InMemory;
     use tokio::sync::RwLock as AsyncRwLock;
+    use tokio_util::sync::CancellationToken;
 
     use super::*;
     use crate::event::{Event, append_event};
+    use crate::outcome::Outcome;
     use crate::records::StageSummary;
+    use crate::run_options::{GitCheckpointOptions, RunOptions};
+    use crate::services::EngineServices;
 
     struct MockProvider {
         name:          String,
@@ -749,6 +767,13 @@ mod tests {
         ))
     }
 
+    fn test_catalog() -> Arc<Catalog> {
+        Arc::new(
+            Catalog::from_builtin_with_overrides(&LlmCatalogSettings::default())
+                .expect("default catalog should build"),
+        )
+    }
+
     fn explicit_client(provider_name: &str, text: &str) -> Arc<Client> {
         let mut providers: HashMap<String, Arc<dyn ProviderAdapter>> = HashMap::new();
         providers.insert(
@@ -789,7 +814,7 @@ mod tests {
 
     fn openai_api_key_credential(key: &str) -> AuthCredential {
         AuthCredential {
-            provider: fabro_model::Provider::OpenAi,
+            provider: fabro_model::Provider::OpenAi.id(),
             details:  AuthDetails::ApiKey {
                 key: key.to_string(),
             },
@@ -835,7 +860,7 @@ mod tests {
             timestamp:            Utc::now(),
             status:               crate::outcome::StageOutcome::Succeeded,
             duration_ms:          150_000,
-            failure_reason:       None,
+            failure:              None,
             final_git_commit_sha: None,
             stages:               vec![
                 StageSummary {
@@ -867,6 +892,48 @@ mod tests {
             total_retries:        0,
             diff:                 fabro_types::RunDiff::default(),
         }
+    }
+
+    #[tokio::test]
+    async fn pull_request_omits_pushed_branch_when_run_branch_push_disabled() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut settings = WorkflowSettings::default();
+        settings.run.run_branch.push = false;
+        let run_options = RunOptions {
+            settings,
+            run_dir: temp.path().to_path_buf(),
+            cancel_token: CancellationToken::new(),
+            run_id: fixtures::RUN_1,
+            labels: HashMap::new(),
+            workflow_slug: None,
+            github_app: None,
+            pre_run_git: None,
+            fork_source_ref: None,
+            base_branch: None,
+            display_base_sha: None,
+            git: Some(GitCheckpointOptions {
+                base_sha:    None,
+                run_branch:  Some("fabro/run/test".to_string()),
+                meta_branch: None,
+            }),
+        };
+        let concluded = Concluded {
+            outcome: Ok(Outcome::success()),
+            conclusion: make_test_conclusion(),
+            graph: Graph::new("test"),
+            run_options,
+            services: EngineServices::test_default().run,
+        };
+
+        let finalized = pull_request(concluded, &PullRequestOptions {
+            pr_config:  None,
+            github_app: None,
+            origin_url: None,
+            model:      "test-model".to_string(),
+        })
+        .await;
+
+        assert_eq!(finalized.pushed_branch, None);
     }
 
     // ── format_arc_details_section tests ────────────────────────────────
@@ -1030,6 +1097,7 @@ mod tests {
             "Implement feature",
             "mock-model",
             &run_store.clone().into(),
+            Catalog::builtin(),
             Some(&make_test_conclusion()),
             None,
             explicit_client(
@@ -1097,6 +1165,7 @@ mod tests {
             "Implement feature",
             "mock-model",
             &run_store.clone().into(),
+            Catalog::builtin(),
             Some(&make_test_conclusion()),
             None,
             explicit_client(
@@ -1188,6 +1257,7 @@ mod tests {
             "Implement feature",
             "mock-model",
             &run_store.clone().into(),
+            Catalog::builtin(),
             Some(&make_test_conclusion()),
             None,
             explicit_client(
@@ -1212,6 +1282,7 @@ mod tests {
             "Implement feature",
             "gpt-5.4",
             &run_store.clone().into(),
+            Catalog::builtin(),
             Some(&make_test_conclusion()),
             None,
             explicit_client(
@@ -1274,6 +1345,7 @@ mod tests {
             "gpt-5.4",
             &run_store_handle,
             llm_source.as_ref(),
+            test_catalog(),
             Some(&make_test_conclusion()),
             None,
         )
@@ -1430,10 +1502,13 @@ mod tests {
                 plan: 100_000,
             }
         );
-        assert_eq!(truncation_caps("unknown-model"), TruncationCaps {
-            diff: 80_000,
-            plan: 20_000,
-        });
+        assert_eq!(
+            truncation_caps("unknown-model", Catalog::builtin()),
+            TruncationCaps {
+                diff: 80_000,
+                plan: 20_000,
+            }
+        );
     }
 
     #[tokio::test]
@@ -1460,6 +1535,7 @@ mod tests {
             auto_merge:  None,
             run_store:   &run_store_handle,
             llm_source:  llm_source.as_ref(),
+            catalog:     test_catalog(),
             conclusion:  None,
             run_state:   None,
         })
@@ -1550,6 +1626,7 @@ mod tests {
             "Implement feature",
             "mock-model",
             &run_store.clone().into(),
+            Catalog::builtin(),
             Some(&make_test_conclusion()),
             None,
             explicit_client("mock", &payload),
@@ -1572,6 +1649,7 @@ mod tests {
             "## Plan:",
             "mock-model",
             &run_store.clone().into(),
+            Catalog::builtin(),
             Some(&make_test_conclusion()),
             None,
             explicit_client("mock", &payload),
@@ -1654,6 +1732,7 @@ mod tests {
             "Implement feature",
             "mock-model",
             &run_store.clone().into(),
+            Catalog::builtin(),
             Some(&make_test_conclusion()),
             None,
             explicit_client("mock", &payload),
@@ -1853,6 +1932,7 @@ mod tests {
             auto_merge: None,
             run_store: &harness.run_store,
             llm_source: harness.llm_source.as_ref(),
+            catalog: test_catalog(),
             conclusion: None,
             run_state: None,
         })
@@ -1889,6 +1969,7 @@ mod tests {
             auto_merge: None,
             run_store: &harness.run_store,
             llm_source: harness.llm_source.as_ref(),
+            catalog: test_catalog(),
             conclusion: None,
             run_state: None,
         })

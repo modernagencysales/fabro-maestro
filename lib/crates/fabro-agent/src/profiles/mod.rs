@@ -1,9 +1,12 @@
+use std::sync::Arc;
+
+use fabro_model::{Catalog, Provider, ProviderId};
+
 pub mod anthropic;
 pub mod gemini;
 pub mod openai;
 
 pub use anthropic::AnthropicProfile;
-use fabro_model::Provider;
 pub use gemini::GeminiProfile;
 pub use openai::OpenAiProfile;
 
@@ -16,9 +19,11 @@ use crate::tool_registry::ToolRegistry;
 /// Each concrete profile embeds this struct and delegates `provider()`,
 /// `model()`, `tool_registry()`, and `tool_registry_mut()` to it.
 pub struct BaseProfile {
-    pub provider: Provider,
-    pub model:    String,
-    pub registry: ToolRegistry,
+    pub provider:    Provider,
+    pub provider_id: ProviderId,
+    pub model:       String,
+    pub catalog:     Option<Arc<Catalog>>,
+    pub registry:    ToolRegistry,
 }
 
 /// Additional context for building environment blocks

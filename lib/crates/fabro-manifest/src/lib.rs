@@ -8,7 +8,7 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 use fabro_api::types;
-use fabro_config::project::{self, discover_project_config, resolve_workflow_path};
+use fabro_config::project::{self, WorkflowLocation, discover_project_config};
 use fabro_config::run::{resolve_run_goal_from_layer, resolve_run_goal_from_namespace};
 use fabro_config::{
     CliLayer, DaytonaDockerfileLayer, DockerSandboxLayer, ReplaceMap, RunExecutionLayer,
@@ -16,7 +16,7 @@ use fabro_config::{
 };
 use fabro_graphviz::graph::AttrValue;
 use fabro_graphviz::parser;
-use fabro_template::{TemplateContext, render as render_template};
+use fabro_template::{TemplateContext, render_lenient as render_scan_template};
 use fabro_types::settings::interp::InterpString;
 use fabro_types::settings::run::{ApprovalMode, ResolvedGoalSource, ResolvedRunGoal, RunMode};
 use fabro_types::{DirtyStatus, GitContext, PreRunPushOutcome, RunId, WorkflowSettings};
@@ -67,6 +67,7 @@ pub fn build_run_overrides(input: RunOverrideInput<'_>) -> RunLayer {
         provider:  input.provider.map(InterpString::parse),
         name:      input.model.map(InterpString::parse),
         fallbacks: Vec::new(),
+        controls:  None,
     });
     let sandbox = (input.sandbox.is_some()
         || input.docker_image.is_some()
@@ -134,20 +135,24 @@ struct WorkflowScanInput {
 }
 
 pub fn build_run_manifest(input: ManifestBuildInput) -> Result<BuiltManifest> {
-    let root_resolution = resolve_workflow_path(&input.workflow, &input.cwd)?;
-    if root_resolution.workflow_toml_path.is_none()
-        && !root_resolution.resolved_workflow_path.is_file()
-    {
+    let root_location = WorkflowLocation::resolve(&input.workflow, &input.cwd)?;
+    if root_location.toml.is_none() && !root_location.graph.is_file() {
         return Err(fabro_config::Error::WorkflowNotFound(
-            root_resolution.resolved_workflow_path.display().to_string(),
+            root_location.graph.display().to_string(),
         )
         .into());
     }
-    let workflow_parent = root_resolution
-        .resolved_workflow_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
-    let project_config = discover_project_config(workflow_parent)?;
+    let project_config = discover_project_config(&root_location.dir)?;
+    let project_config_source = project_config
+        .as_ref()
+        .map(|path| {
+            let source = std::fs::read_to_string(path)
+                .with_context(|| format!("Failed to read {}", path.display()))?;
+            let manifest_path = manifest_path_from_absolute(path, &input.cwd)?;
+            Ok::<_, anyhow::Error>((path.clone(), manifest_path, source))
+        })
+        .transpose()?;
+
     let mut workflow_settings_builder = WorkflowSettingsBuilder::new();
     if let Some(run) = input.run_overrides.clone() {
         workflow_settings_builder = workflow_settings_builder.run_overrides(run);
@@ -155,7 +160,7 @@ pub fn build_run_manifest(input: ManifestBuildInput) -> Result<BuiltManifest> {
     if let Some(cli) = input.cli_overrides.clone() {
         workflow_settings_builder = workflow_settings_builder.cli_overrides(cli);
     }
-    if let Some(path) = root_resolution.workflow_toml_path.as_ref() {
+    if let Some(path) = root_location.toml.as_ref() {
         workflow_settings_builder = workflow_settings_builder.workflow_file(path)?;
     }
     if let Some(path) = project_config.as_ref() {
@@ -172,7 +177,7 @@ pub fn build_run_manifest(input: ManifestBuildInput) -> Result<BuiltManifest> {
         .build()
         .context("failed to resolve manifest settings")?;
     workflow_settings.run.inputs.extend(input.input_overrides);
-    let target_path = root_resolution.dot_path.clone();
+    let target_path = root_location.graph.clone();
     let target_manifest_path = manifest_path_from_absolute(&target_path, &input.cwd)?;
     let target_key = target_manifest_path.to_string();
 
@@ -183,6 +188,13 @@ pub fn build_run_manifest(input: ManifestBuildInput) -> Result<BuiltManifest> {
         visited_workflows: HashSet::new(),
     };
     collect_workflow_entry(&mut context, &input.workflow, &input.cwd)?;
+    if let Some((_, config_path, source)) = project_config_source.as_ref() {
+        let workflow = context
+            .workflows
+            .get_mut(&target_key)
+            .ok_or_else(|| anyhow!("root workflow missing from manifest bundle"))?;
+        collect_config_dockerfile(context.cwd, config_path, source, &mut workflow.files)?;
+    }
 
     let root_source = context
         .workflows
@@ -191,9 +203,7 @@ pub fn build_run_manifest(input: ManifestBuildInput) -> Result<BuiltManifest> {
         .ok_or_else(|| anyhow!("root workflow missing from manifest bundle"))?;
 
     let mut configs = Vec::new();
-    if let Some(path) = project_config {
-        let source = std::fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read {}", path.display()))?;
+    if let Some((path, _, source)) = project_config_source {
         configs.push(types::ManifestConfig {
             path:   Some(path.display().to_string()),
             source: Some(source),
@@ -263,16 +273,16 @@ fn collect_workflow_entry(
     } else {
         workflow.to_path_buf()
     };
-    let resolution = resolve_workflow_path(&normalized_workflow, resolve_from)?;
-    let dot_path = manifest_path_from_absolute(&resolution.dot_path, context.cwd)?;
+    let location = WorkflowLocation::resolve(&normalized_workflow, resolve_from)?;
+    let dot_path = manifest_path_from_absolute(&location.graph, context.cwd)?;
     let dot_key = dot_path.to_string();
     if !context.visited_workflows.insert(dot_key.clone()) {
         return Ok(());
     }
 
-    let source = std::fs::read_to_string(&resolution.dot_path)
-        .with_context(|| format!("Failed to read {}", resolution.dot_path.display()))?;
-    let config = if let Some(workflow_toml_path) = resolution.workflow_toml_path.as_ref() {
+    let source = std::fs::read_to_string(&location.graph)
+        .with_context(|| format!("Failed to read {}", location.graph.display()))?;
+    let config = if let Some(workflow_toml_path) = location.toml.as_ref() {
         Some(types::ManifestWorkflowConfig {
             path:   manifest_path_from_absolute(workflow_toml_path, context.cwd)?.to_string(),
             source: std::fs::read_to_string(workflow_toml_path)
@@ -283,14 +293,16 @@ fn collect_workflow_entry(
     };
 
     let scan = WorkflowScanInput {
-        absolute_dot_path: resolution.dot_path,
+        absolute_dot_path: location.graph,
         dot_path,
         source: source.clone(),
     };
     let mut files = HashMap::new();
     let mut visited_imports = HashSet::new();
     if let Some(config) = config.as_ref() {
-        collect_workflow_config_files(context, config, &mut files)?;
+        let config_path = ManifestPath::from_wire(&config.path)
+            .ok_or_else(|| anyhow!("invalid manifest workflow config path: {}", config.path))?;
+        collect_config_dockerfile(context.cwd, &config_path, &config.source, &mut files)?;
     }
     collect_workflow_files(context, &scan, &mut files, &mut visited_imports)?;
 
@@ -406,19 +418,17 @@ fn render_workflow_scan_source(
     path: &Path,
     inputs: &HashMap<String, toml::Value>,
 ) -> Result<String> {
-    render_template(source, &TemplateContext::for_input_scan(inputs.clone()))
+    render_scan_template(source, &TemplateContext::for_input_scan(inputs.clone()))
         .with_context(|| format!("Failed to render {} for manifest scanning", path.display()))
 }
 
-fn collect_workflow_config_files(
-    context: &CollectContext<'_>,
-    config: &types::ManifestWorkflowConfig,
+fn collect_config_dockerfile(
+    cwd: &Path,
+    config_path: &ManifestPath,
+    source: &str,
     files: &mut HashMap<String, types::ManifestFileEntry>,
 ) -> Result<()> {
-    let mut document: toml::Table = config
-        .source
-        .parse()
-        .context("Failed to parse run config TOML")?;
+    let mut document: toml::Table = source.parse().context("Failed to parse run config TOML")?;
     let run = document
         .remove("run")
         .map(toml::Value::try_into::<RunLayer>)
@@ -436,18 +446,16 @@ fn collect_workflow_config_files(
         return Ok(());
     };
 
-    let config_path = ManifestPath::from_wire(&config.path)
-        .ok_or_else(|| anyhow!("invalid manifest workflow config path: {}", config.path))?;
-    let absolute_config_path = context.cwd.join(config_path.as_path());
+    let absolute_config_path = cwd.join(config_path.as_path());
     collect_bundled_file(
         files,
         absolute_config_path
             .parent()
             .unwrap_or_else(|| Path::new(".")),
-        context.cwd,
+        cwd,
         path,
         types::ManifestFileRefType::Dockerfile,
-        Some(config_path),
+        Some(config_path.clone()),
     )?;
     Ok(())
 }
@@ -849,6 +857,53 @@ mod tests {
                 .workflows
                 .contains_key(".fabro/workflows/child/workflow.fabro")
         );
+    }
+
+    #[test]
+    fn build_manifest_bundles_project_config_daytona_dockerfile_relative_to_project_config() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path();
+        let workflow_dir = project.join(".fabro/workflows/demo");
+        std::fs::create_dir_all(&workflow_dir).unwrap();
+
+        std::fs::write(
+            project.join(".fabro/project.toml"),
+            r#"_version = 1
+
+[run.sandbox.daytona.snapshot]
+name = "fabro-test"
+dockerfile = { path = "Dockerfile" }
+"#,
+        )
+        .unwrap();
+        std::fs::write(project.join(".fabro/Dockerfile"), "FROM ubuntu:24.04\n").unwrap();
+        std::fs::write(
+            workflow_dir.join("workflow.toml"),
+            "_version = 1\n\n[workflow]\ngraph = \"workflow.fabro\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            workflow_dir.join("workflow.fabro"),
+            r"digraph Demo { start [shape=Mdiamond] exit [shape=Msquare] start -> exit }",
+        )
+        .unwrap();
+
+        let built = build_run_manifest(ManifestBuildInput {
+            workflow: PathBuf::from(".fabro/workflows/demo/workflow.toml"),
+            cwd: project.to_path_buf(),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let root = &built.manifest.workflows[".fabro/workflows/demo/workflow.fabro"];
+        let entry = root
+            .files
+            .get(".fabro/Dockerfile")
+            .expect("project Dockerfile should be bundled with target workflow");
+        assert_eq!(entry.content, "FROM ubuntu:24.04\n");
+        assert_eq!(entry.ref_.type_, types::ManifestFileRefType::Dockerfile);
+        assert_eq!(entry.ref_.original, "Dockerfile");
+        assert_eq!(entry.ref_.from.as_deref(), Some(".fabro/project.toml"));
     }
 
     #[test]

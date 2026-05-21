@@ -21,6 +21,7 @@ use fabro_types::{
 };
 use fabro_util::version::FABRO_VERSION;
 use fabro_workflow::command_log::{command_log_path, read_json_string_blob, read_log_slice};
+use fabro_workflow::operations::RenderMode;
 use fabro_workflow::run_status::RunStatus;
 use fabro_workflow::{Error as WorkflowError, operations};
 use tokio::fs;
@@ -401,7 +402,11 @@ async fn create_run(
     info!(run_id = %run_id, "Run created");
 
     let web_url = state.run_web_url(&run_id);
-    let configured_providers = state.llm_source.configured_providers().await;
+    let catalog = state.catalog();
+    let configured_providers = state
+        .llm_source
+        .configured_providers(catalog.as_ref())
+        .await;
     let mut create_input =
         run_manifest::create_run_input(prepared.clone(), configured_providers, web_url.clone());
     create_input.run_id = Some(run_id);
@@ -422,6 +427,7 @@ async fn create_run(
         state.store.as_ref(),
         create_input,
         storage_root,
+        catalog,
     ))
     .await
     {
@@ -512,7 +518,11 @@ async fn run_preflight(
         Ok(prepared) => prepared,
         Err(err) => return ApiError::bad_request(err.to_string()).into_response(),
     };
-    let validated = match run_manifest::validate_prepared_manifest(&prepared) {
+    let validated = match run_manifest::validate_prepared_manifest(
+        &prepared,
+        RenderMode::Strict,
+        state.catalog(),
+    ) {
         Ok(validated) => validated,
         Err(WorkflowError::Parse(_)) => {
             return ApiError::bad_request("Validation failed").into_response();
@@ -539,7 +549,11 @@ async fn validate_run_manifest(
         Ok(prepared) => prepared,
         Err(err) => return ApiError::bad_request(err.to_string()).into_response(),
     };
-    let validated = match run_manifest::validate_prepared_manifest(&prepared) {
+    let validated = match run_manifest::validate_prepared_manifest(
+        &prepared,
+        RenderMode::Structural,
+        state.catalog(),
+    ) {
         Ok(validated) => validated,
         Err(WorkflowError::Parse(_)) => {
             return ApiError::bad_request("Validation failed").into_response();

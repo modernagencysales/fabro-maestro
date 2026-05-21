@@ -13,7 +13,7 @@ use fabro_llm::types::{
 use fabro_llm::{Error as LlmError, retry};
 use fabro_mcp::config::{McpServerSettings, McpTransport};
 use fabro_mcp::connection_manager::McpConnectionManager;
-use fabro_model::{ModelRef, Provider, Speed};
+use fabro_model::{Catalog, ModelRef, Provider, Speed};
 use fabro_types::Principal;
 use futures::StreamExt;
 use tokio::sync::{Mutex as AsyncMutex, Notify, broadcast};
@@ -302,11 +302,11 @@ impl Session {
         }
     }
 
-    /// Build a session from a credential source. Resolves the LLM client
-    /// once at construction and caches it for the session's lifetime.
+    /// Build a session from a credential source and catalog. Resolves the LLM
+    /// client once at construction and caches it for the session's lifetime.
     /// Sessions are bounded (≤ 1 hour); cached client is fine within that
-    /// window. For longer-lived contexts (workflow runs) hold a source,
-    /// not a session.
+    /// window. For longer-lived contexts (workflow runs) hold a source and
+    /// catalog, not a session.
     ///
     /// # Errors
     ///
@@ -314,12 +314,13 @@ impl Session {
     /// OAuth refresh failed).
     pub async fn from_source(
         source: &dyn CredentialSource,
+        catalog: Arc<Catalog>,
         provider_profile: Arc<dyn AgentProfile>,
         sandbox: Arc<dyn Sandbox>,
         config: SessionOptions,
         subagent_manager: Option<Arc<AsyncMutex<SubAgentManager>>>,
     ) -> Result<Self, LlmError> {
-        let client = Client::from_source(source).await?;
+        let client = Client::from_source(source, catalog).await?;
         Ok(Self::new(
             client,
             provider_profile,
@@ -348,6 +349,11 @@ impl Session {
     }
 
     #[must_use]
+    pub fn provider_id(&self) -> fabro_model::ProviderId {
+        self.provider_profile.provider_id()
+    }
+
+    #[must_use]
     pub fn model(&self) -> &str {
         self.provider_profile.model()
     }
@@ -364,7 +370,7 @@ impl Session {
 
         self.event_emitter
             .emit(self.id.clone(), AgentEvent::SessionStarted {
-                provider: Some(self.provider_profile.provider().to_string()),
+                provider: Some(self.provider_profile.provider_id().to_string()),
                 model:    Some(self.provider_profile.model().to_string()),
             });
 
@@ -943,7 +949,7 @@ impl Session {
         self.config.reasoning_effort = effort;
     }
 
-    pub fn set_speed(&mut self, speed: Option<String>) {
+    pub fn set_speed(&mut self, speed: Option<Speed>) {
         self.config.speed = speed;
     }
 
@@ -1125,7 +1131,7 @@ impl Session {
             // Call LLM (streaming) with retry for transient errors
             let retry_emitter = self.event_emitter.clone();
             let retry_session_id = self.id.clone();
-            let retry_provider = self.provider_profile.provider().to_string();
+            let retry_provider = self.provider_profile.provider_id().to_string();
             let retry_model = self.provider_profile.model().to_string();
             let retry_policy = RetryPolicy {
                 max_retries: 3,
@@ -1321,19 +1327,14 @@ impl Session {
             });
 
             // Emit AssistantMessage with enriched data from the response
-            let speed = self
-                .config
-                .speed
-                .as_deref()
-                .and_then(|value| value.parse::<Speed>().ok());
             let model = ModelRef {
-                provider: self.provider_profile.provider(),
+                provider: self.provider_profile.provider_id(),
                 model_id: if response.model.is_empty() {
                     self.provider_profile.model().to_string()
                 } else {
                     response.model.clone()
                 },
-                speed,
+                speed:    self.config.speed,
             };
             self.event_emitter
                 .emit(self.id.clone(), AgentEvent::AssistantMessage {
@@ -1525,7 +1526,7 @@ impl Session {
         Request {
             model: self.provider_profile.model().to_string(),
             messages,
-            provider: Some(self.provider_profile.provider().to_string()),
+            provider: Some(self.provider_profile.provider_id().to_string()),
             tools: if has_tools { Some(tools) } else { None },
             tool_choice: if has_tools {
                 Some(ToolChoice::Auto)
@@ -1535,14 +1536,13 @@ impl Session {
             response_format: None,
             temperature: None,
             top_p: None,
-            max_tokens: self.config.max_tokens.or_else(|| {
-                fabro_model::Catalog::builtin()
-                    .get(self.provider_profile.model())
-                    .and_then(fabro_model::Model::max_output)
-            }),
+            max_tokens: self
+                .config
+                .max_tokens
+                .or_else(|| self.provider_profile.max_output_tokens()),
             stop_sequences: None,
             reasoning_effort: self.config.reasoning_effort,
-            speed: self.config.speed.clone(),
+            speed: self.config.speed,
             metadata: None,
             provider_options: None,
         }

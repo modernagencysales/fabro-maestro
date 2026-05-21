@@ -11,10 +11,11 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
-use fabro_config::{ServerSettingsBuilder, Storage};
+use fabro_config::{ServerSettingsBuilder, Storage, load_llm_catalog_settings};
 use fabro_interview::{
     AnswerSubmission, ControlInterviewer, WorkerControlEnvelope, WorkerControlMessage,
 };
+use fabro_model::Catalog;
 use fabro_store::{EventEnvelope, RunProjection, RunProjectionReducer};
 use fabro_types::settings::InterpString;
 use fabro_types::settings::run::{RunMode, RunNamespace};
@@ -93,6 +94,12 @@ pub(crate) async fn execute(
     let run_control = RunControlState::new();
     install_signal_handlers(Arc::clone(&run_control), cancel_token.clone())?;
     let vault = load_worker_vault(storage_dir.as_deref())?;
+    let llm_catalog_settings =
+        load_llm_catalog_settings(None).context("failed to load worker LLM catalog settings")?;
+    let catalog = Arc::new(
+        Catalog::from_builtin_with_overrides(&llm_catalog_settings)
+            .context("failed to build worker LLM catalog")?,
+    );
     let github_app = {
         let vault_guard = match &vault {
             Some(arc) => Some(arc.read().await),
@@ -127,6 +134,7 @@ pub(crate) async fn execute(
             .github
             .resolve_permissions(process_env_var),
         vault,
+        catalog,
         on_node: None,
         registry_override: None,
     };
@@ -508,7 +516,7 @@ fn worker_title_phase_for_event(body: &EventBody) -> Option<WorkerTitlePhase> {
         }
         EventBody::RunPaused(_) => Some(WorkerTitlePhase::Paused),
         EventBody::RunCompleted(_) => Some(WorkerTitlePhase::Succeeded),
-        EventBody::RunFailed(props) => Some(if props.reason == FailureReason::Cancelled {
+        EventBody::RunFailed(props) => Some(if props.failure.reason == FailureReason::Cancelled {
             WorkerTitlePhase::Cancelled
         } else {
             WorkerTitlePhase::Failed
@@ -651,8 +659,8 @@ mod tests {
         RunFailedProps, RunStatusTransitionProps,
     };
     use fabro_types::{
-        AuthMethod, EventBody, FailureReason, IdpIdentity, Principal, QuestionType, SuccessReason,
-        fixtures,
+        AuthMethod, EventBody, FailureCategory, FailureReason, IdpIdentity, Principal,
+        QuestionType, RunFailure, SuccessReason, fixtures,
     };
     use fabro_vault::{SecretType, Vault};
     use fabro_workflow::event::RunEventSink;
@@ -777,25 +785,39 @@ mod tests {
         );
         assert_eq!(
             worker_title_phase_for_event(&EventBody::RunFailed(RunFailedProps {
-                error:          "cancelled".to_string(),
-                causes:         Vec::new(),
-                duration_ms:    10,
-                reason:         FailureReason::Cancelled,
-                git_commit_sha: None,
-                final_patch:    None,
-                diff_summary:   None,
+                failure:              RunFailure {
+                    message:          "cancelled".to_string(),
+                    causes:           Vec::new(),
+                    reason:           FailureReason::Cancelled,
+                    category:         FailureCategory::Canceled,
+                    system_actor:     None,
+                    signature:        None,
+                    exec_output_tail: None,
+                },
+                duration_ms:          10,
+                final_git_commit_sha: None,
+                final_patch:          None,
+                diff_summary:         None,
+                billing:              None,
             })),
             Some(WorkerTitlePhase::Cancelled)
         );
         assert_eq!(
             worker_title_phase_for_event(&EventBody::RunFailed(RunFailedProps {
-                error:          "boom".to_string(),
-                causes:         Vec::new(),
-                duration_ms:    10,
-                reason:         FailureReason::Terminated,
-                git_commit_sha: None,
-                final_patch:    None,
-                diff_summary:   None,
+                failure:              RunFailure {
+                    message:          "boom".to_string(),
+                    causes:           Vec::new(),
+                    reason:           FailureReason::Terminated,
+                    category:         FailureCategory::Deterministic,
+                    system_actor:     None,
+                    signature:        None,
+                    exec_output_tail: None,
+                },
+                duration_ms:          10,
+                final_git_commit_sha: None,
+                final_patch:          None,
+                diff_summary:         None,
+                billing:              None,
             })),
             Some(WorkerTitlePhase::Failed)
         );
@@ -972,7 +994,7 @@ mod tests {
             .set(
                 "anthropic",
                 &serde_json::to_string(&AuthCredential {
-                    provider: Provider::Anthropic,
+                    provider: Provider::Anthropic.id(),
                     details:  AuthDetails::ApiKey {
                         key: "vault-key".to_string(),
                     },

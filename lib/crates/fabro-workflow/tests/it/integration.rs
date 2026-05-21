@@ -32,6 +32,8 @@ use fabro_interview::{
     QueueInterviewer, RecordingInterviewer,
 };
 use fabro_llm::provider::Provider;
+use fabro_model::Catalog;
+use fabro_model::catalog::LlmCatalogSettings;
 use fabro_store::{ArtifactKey, ArtifactStore, Database};
 use fabro_types::{CommandTermination, RunEvent, RunId, StageId, WorkflowSettings, parse_blob_ref};
 use fabro_validate::{Severity, validate, validate_or_raise};
@@ -60,6 +62,13 @@ use fabro_workflow::transforms::{StylesheetApplicationTransform, TemplateTransfo
 use object_store::local::LocalFileSystem;
 use tokio_util::sync::CancellationToken;
 use ulid::Ulid;
+
+fn default_catalog() -> Arc<Catalog> {
+    Arc::new(
+        Catalog::from_builtin_with_overrides(&LlmCatalogSettings::default())
+            .expect("default catalog should build"),
+    )
+}
 
 fn local_env() -> Arc<dyn fabro_agent::Sandbox> {
     Arc::new(fabro_agent::LocalSandbox::new(
@@ -4263,6 +4272,12 @@ async fn import_e2e_through_engine() {
     use fabro_workflow::pipeline::{TransformOptions, transform, validate};
 
     let dir = tempfile::tempdir().unwrap();
+    let catalog = std::sync::Arc::new(
+        fabro_model::Catalog::from_builtin_with_overrides(
+            &fabro_model::catalog::LlmCatalogSettings::default(),
+        )
+        .unwrap(),
+    );
     std::fs::write(
         dir.path().join("val.fabro"),
         r#"digraph validate {
@@ -4304,9 +4319,10 @@ async fn import_e2e_through_engine() {
         )),
         inputs:            std::collections::HashMap::new(),
         custom_transforms: vec![],
+        catalog:           std::sync::Arc::clone(&catalog),
     })
     .unwrap();
-    let validated = validate(transformed, &[]);
+    let validated = validate(transformed, catalog.as_ref(), &[]);
     validated
         .raise_on_errors()
         .expect("validation should pass after imports expand");
@@ -6382,9 +6398,11 @@ mod real_llm {
 
         fabro_test::require_env("ANTHROPIC_API_KEY")?;
         let source = fabro_auth::EnvCredentialSource::new();
-        Some(Arc::new(Client::from_source(&source).await.expect(
-            "unified-llm client should initialize from env source",
-        )))
+        Some(Arc::new(
+            Client::from_source(&source, super::default_catalog())
+                .await
+                .expect("unified-llm client should initialize from env source"),
+        ))
     }
 
     fn make_llm_backend(client: Arc<Client>) -> Box<LlmCodergenBackend> {
@@ -6847,7 +6865,7 @@ mod real_llm {
 
 fn openai_api_key_credential(key: &str) -> fabro_auth::AuthCredential {
     fabro_auth::AuthCredential {
-        provider: fabro_model::Provider::OpenAi,
+        provider: fabro_model::Provider::OpenAi.id(),
         details:  fabro_auth::AuthDetails::ApiKey {
             key: key.to_string(),
         },
@@ -6993,11 +7011,12 @@ async fn workflow_run_with_vault_only_openai_codex_builds_pr_body() {
         "gpt-5.4",
         &run_store_handle,
         llm_source.as_ref(),
+        default_catalog(),
         Some(&Conclusion {
             timestamp:            Utc::now(),
             status:               StageOutcome::Succeeded,
             duration_ms:          1,
-            failure_reason:       None,
+            failure:              None,
             final_git_commit_sha: None,
             stages:               Vec::new(),
             billing:              None,
@@ -7801,6 +7820,7 @@ fn hook_runner_from_defs(hooks: Vec<fabro_hooks::HookDefinition>) -> Arc<fabro_h
     Arc::new(fabro_hooks::HookRunner::new(
         fabro_hooks::HookSettings { hooks },
         Arc::new(fabro_auth::EnvCredentialSource::new()),
+        default_catalog(),
     ))
 }
 

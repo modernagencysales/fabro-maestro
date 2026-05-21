@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use fabro_model::{Catalog, ReasoningEffortFeature};
 use futures::stream;
 
 use crate::error::{Error, error_from_status_code};
@@ -10,7 +13,7 @@ use crate::providers::common::{
 };
 use crate::types::{
     AdapterTimeout, ContentPart, FinishReason, Message, RateLimitInfo, ReasoningEffort, Request,
-    Response, ResponseFormatType, Role, StreamEvent, ThinkingData, TokenCounts, ToolCall,
+    Response, ResponseFormatType, Role, Speed, StreamEvent, ThinkingData, TokenCounts, ToolCall,
     ToolChoice, ToolDefinition,
 };
 
@@ -18,14 +21,21 @@ use crate::types::{
 pub struct Adapter {
     pub(crate) http: super::http_api::HttpApi,
     provider_name:   String,
+    catalog:         Option<Arc<Catalog>>,
 }
 
 impl Adapter {
     #[must_use]
     pub fn new(api_key: impl Into<String>) -> Self {
+        Self::new_optional_auth(Some(api_key.into()))
+    }
+
+    #[must_use]
+    pub fn new_optional_auth(api_key: Option<String>) -> Self {
         Self {
-            http:          super::http_api::HttpApi::new(api_key, DEFAULT_BASE_URL),
+            http:          super::http_api::HttpApi::new_optional(api_key, DEFAULT_BASE_URL),
             provider_name: "anthropic".to_string(),
+            catalog:       None,
         }
     }
 
@@ -47,6 +57,12 @@ impl Adapter {
             http: self.http.with_default_headers(headers),
             ..self
         }
+    }
+
+    #[must_use]
+    pub fn with_catalog(mut self, catalog: Arc<Catalog>) -> Self {
+        self.catalog = Some(catalog);
+        self
     }
 
     #[must_use]
@@ -1112,7 +1128,10 @@ async fn build_api_request(
         request.tools.as_ref().map(|t| translate_tools(t))
     };
 
-    let auto_cache = is_auto_cache_enabled(request.provider_options.as_ref());
+    let model_info = common::catalog_model(adapter.catalog.as_deref(), &request.model);
+    let supports_prompt_cache = model_info.is_some_and(|m| m.features.prompt_cache);
+    let auto_cache =
+        supports_prompt_cache && is_auto_cache_enabled(request.provider_options.as_ref());
 
     let mut system_value = system.and_then(|s| {
         if s.trim().is_empty() {
@@ -1145,8 +1164,8 @@ async fn build_api_request(
     // Check whether this model supports the `output_config.effort` parameter.
     // Older reasoning models (e.g. claude-sonnet-4-5) need `thinking` with
     // `budget_tokens` instead.
-    let model_info = fabro_model::Catalog::builtin().get(&request.model);
-    let supports_effort = model_info.is_none_or(|m| m.features.effort);
+    let supports_effort =
+        model_info.is_none_or(|m| m.features.reasoning_effort == ReasoningEffortFeature::Levels);
 
     let mut resolved_max_tokens = request
         .max_tokens
@@ -1178,7 +1197,9 @@ async fn build_api_request(
         // Auto-set adaptive thinking for known effort-capable models when no
         // explicit thinking config or reasoning_effort is provided.
         let thinking = explicit_thinking.or_else(|| {
-            if model_info.is_some_and(|m| m.features.effort) {
+            if model_info
+                .is_some_and(|m| m.features.reasoning_effort == ReasoningEffortFeature::Levels)
+            {
                 Some(serde_json::json!({"type": "adaptive"}))
             } else {
                 None
@@ -1192,21 +1213,25 @@ async fn build_api_request(
         output_config = None;
     }
 
-    let is_fast = request.speed.as_deref() == Some("fast");
+    let is_fast = request.speed == Some(Speed::Fast);
 
     let api_request = ApiRequest {
-        model: request.model.clone(),
+        model: common::api_model_id(adapter.catalog.as_deref(), &request.model),
         messages: api_messages,
         max_tokens: resolved_max_tokens,
         system: system_value,
         temperature: request.temperature,
         top_p: request.top_p,
-        stop_sequences: request.stop_sequences.clone(),
+        stop_sequences: Some(request.stop_sequences.clone().unwrap_or_default()),
         tools: api_tools,
         tool_choice: tool_choice_json,
         thinking,
         output_config,
-        speed: request.speed.clone(),
+        speed: request
+            .speed
+            .filter(|speed| *speed != Speed::Standard)
+            .map(<&'static str>::from)
+            .map(str::to_string),
         metadata: request.metadata.clone(),
         stream,
     };
@@ -1219,9 +1244,10 @@ async fn build_api_request(
     }
 
     if adapter.provider_name == "anthropic" {
-        req_builder = req_builder
-            .header("x-api-key", &adapter.http.api_key)
-            .header("anthropic-version", "2023-06-01");
+        if let Some(api_key) = &adapter.http.api_key {
+            req_builder = req_builder.header("x-api-key", api_key);
+        }
+        req_builder = req_builder.header("anthropic-version", "2023-06-01");
 
         let include_1m_context = model_info.is_some_and(|m| m.context_window() >= 1_000_000);
         if let Some(beta_str) = build_beta_header(
@@ -1232,8 +1258,8 @@ async fn build_api_request(
         ) {
             req_builder = req_builder.header("anthropic-beta", beta_str);
         }
-    } else {
-        req_builder = req_builder.bearer_auth(&adapter.http.api_key);
+    } else if let Some(api_key) = &adapter.http.api_key {
+        req_builder = req_builder.bearer_auth(api_key);
     }
 
     let req_builder = req_builder.json(&merge_provider_options(
@@ -1397,6 +1423,8 @@ impl ProviderAdapter for Adapter {
 
 #[cfg(test)]
 mod tests {
+    use fabro_model::catalog::LlmCatalogSettings;
+
     use super::*;
     use crate::types::{AudioData, DocumentData, ReasoningEffort, ResponseFormat};
 
@@ -1806,6 +1834,34 @@ mod tests {
             metadata:         None,
             provider_options: None,
         }
+    }
+
+    fn catalog_with_anthropic_model(features: &str) -> Arc<Catalog> {
+        let settings: LlmCatalogSettings = toml::from_str(&format!(
+            r#"
+[providers.anthropic]
+display_name = "Anthropic"
+adapter = "anthropic"
+
+[models."test-claude"]
+provider = "anthropic"
+display_name = "Test Claude"
+family = "claude"
+default = true
+
+[models."test-claude".limits]
+context_window = 200000
+max_output = 4096
+
+[models."test-claude".features]
+tools = true
+vision = true
+reasoning = true
+{features}
+"#
+        ))
+        .unwrap();
+        Arc::new(Catalog::from_settings(&settings).unwrap())
     }
 
     fn make_request_with_format(format: ResponseFormat) -> Request {
@@ -2273,10 +2329,112 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_api_request_uses_adaptive_thinking_for_opus_4_7_without_forced_tools() {
+    async fn build_api_request_disables_prompt_cache_when_model_feature_is_false() {
+        let adapter = Adapter::new("test-key").with_catalog(catalog_with_anthropic_model(
+            r#"
+reasoning_effort = "levels"
+prompt_cache = false
+"#,
+        ));
+        let request = Request {
+            model: "test-claude".to_string(),
+            messages: vec![
+                Message::system("Use the cache if supported."),
+                Message::user("Hello"),
+            ],
+            provider_options: Some(serde_json::json!({
+                "anthropic": {"auto_cache": true}
+            })),
+            ..make_base_request()
+        };
+
+        let (api_request, req_builder) = build_api_request(&adapter, &request, false).await;
+        assert_eq!(
+            api_request.system,
+            Some(serde_json::Value::String(
+                "Use the cache if supported.".to_string()
+            ))
+        );
+        let built = req_builder.build().expect("should build request");
+        let beta = built.headers().get("anthropic-beta");
+        assert!(
+            beta.is_none_or(|value| !value.to_str().unwrap().contains(CACHE_BETA_HEADER)),
+            "cache beta header must not be sent when the model disables prompt cache"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_api_request_without_injected_catalog_does_not_use_builtin_model_metadata() {
         let adapter = Adapter::new("test-key");
         let request = Request {
-            model: "claude-opus-4-7".to_string(),
+            model: "claude-sonnet-4-5".to_string(),
+            messages: vec![
+                Message::system("Do not infer cache support from built-ins."),
+                Message::user("Hello"),
+            ],
+            provider_options: Some(serde_json::json!({
+                "anthropic": {"auto_cache": true}
+            })),
+            ..make_base_request()
+        };
+
+        let (api_request, req_builder) = build_api_request(&adapter, &request, false).await;
+        assert_eq!(
+            api_request.system,
+            Some(serde_json::Value::String(
+                "Do not infer cache support from built-ins.".to_string()
+            ))
+        );
+        let built = req_builder.build().expect("should build request");
+        let beta = built.headers().get("anthropic-beta");
+        assert!(
+            beta.is_none_or(|value| !value.to_str().unwrap().contains(CACHE_BETA_HEADER)),
+            "cache beta header must require injected model metadata"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_api_request_enables_prompt_cache_when_model_feature_is_true() {
+        let adapter = Adapter::new("test-key").with_catalog(catalog_with_anthropic_model(
+            r#"
+reasoning_effort = "levels"
+prompt_cache = true
+"#,
+        ));
+        let request = Request {
+            model: "test-claude".to_string(),
+            messages: vec![
+                Message::system("Use the cache if supported."),
+                Message::user("Hello"),
+            ],
+            ..make_base_request()
+        };
+
+        let (api_request, req_builder) = build_api_request(&adapter, &request, false).await;
+        assert_eq!(
+            api_request.system.unwrap()[0]["cache_control"]["type"],
+            "ephemeral"
+        );
+        let built = req_builder.build().expect("should build request");
+        let beta = built
+            .headers()
+            .get("anthropic-beta")
+            .expect("cache beta header should be present")
+            .to_str()
+            .unwrap();
+        assert!(beta.contains(CACHE_BETA_HEADER));
+    }
+
+    #[tokio::test]
+    async fn build_api_request_uses_adaptive_thinking_for_injected_effort_model_without_forced_tools()
+     {
+        let adapter = Adapter::new("test-key").with_catalog(catalog_with_anthropic_model(
+            r#"
+reasoning_effort = "levels"
+"#,
+        ));
+        let request = Request {
+            model: "test-claude".to_string(),
             ..make_base_request()
         };
 
@@ -2394,7 +2552,7 @@ mod tests {
     async fn build_api_request_sets_speed() {
         let adapter = Adapter::new("test-key");
         let request = Request {
-            speed: Some("fast".to_string()),
+            speed: Some(Speed::Fast),
             ..make_base_request()
         };
 
@@ -2403,10 +2561,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn build_api_request_serializes_absent_stop_sequences_as_empty_array() {
+        let adapter = Adapter::new("test-key");
+        let request = make_base_request();
+
+        let (api_request, _req_builder) = build_api_request(&adapter, &request, false).await;
+
+        assert_eq!(api_request.stop_sequences, Some(Vec::new()));
+    }
+
+    #[tokio::test]
     async fn build_api_request_injects_fast_mode_beta_header() {
         let adapter = Adapter::new("test-key");
         let request = Request {
-            speed: Some("fast".to_string()),
+            speed: Some(Speed::Fast),
             ..make_base_request()
         };
 
@@ -2455,9 +2623,9 @@ mod tests {
 
     #[tokio::test]
     async fn build_api_request_falls_back_to_thinking_budget_for_non_effort_model() {
-        let adapter = Adapter::new("test-key");
+        let adapter = Adapter::new("test-key").with_catalog(catalog_with_anthropic_model(""));
         let request = Request {
-            model: "claude-sonnet-4-5".to_string(),
+            model: "test-claude".to_string(),
             max_tokens: Some(16_000),
             reasoning_effort: Some(ReasoningEffort::XHigh),
             ..make_base_request()

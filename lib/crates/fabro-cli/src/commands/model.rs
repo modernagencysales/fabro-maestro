@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use cli_table::format::{Border, Justify, Separator};
 use cli_table::{Cell, CellStruct, Color, Style, Table};
 use fabro_api::types as api_types;
-use fabro_model::{Catalog, Model, ModelTestMode, Provider};
+use fabro_model::{Model, ModelTestMode, Provider, ProviderId};
 use fabro_util::terminal::Styles;
 use futures::{StreamExt, stream};
 use serde::Serialize;
@@ -22,7 +22,7 @@ enum ModelTestResultKind {
 #[derive(Serialize)]
 struct ModelTestRow {
     model:    String,
-    provider: Provider,
+    provider: ProviderId,
     result:   ModelTestResultKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     detail:   Option<String>,
@@ -43,6 +43,13 @@ struct CompletedModelTest {
     model:        Model,
     result_color: Color,
     status:       String,
+}
+
+fn find_model_by_id_or_alias(models: &[Model], id: &str) -> Option<Model> {
+    models
+        .iter()
+        .find(|model| model.id == id || model.aliases.iter().any(|alias| alias == id))
+        .cloned()
 }
 
 pub(crate) async fn execute(
@@ -112,6 +119,7 @@ fn model_row(model: &Model, use_color: bool) -> Vec<CellStruct> {
         model.id.clone().cell().bold(use_color),
         model
             .provider
+            .as_str()
             .cell()
             .foreground_color(color_if(use_color, Color::Ansi256(8))),
         aliases
@@ -190,21 +198,21 @@ fn model_test_row_from_status(model: &Model, status: &str, result_color: Color) 
     match result_color {
         Color::Green => ModelTestRow {
             model:    model.id.clone(),
-            provider: model.provider,
+            provider: model.provider.clone(),
             result:   ModelTestResultKind::Pass,
             detail:   None,
             error:    None,
         },
         Color::Yellow => ModelTestRow {
             model:    model.id.clone(),
-            provider: model.provider,
+            provider: model.provider.clone(),
             result:   ModelTestResultKind::Skip,
             detail:   Some(trimmed.to_string()),
             error:    None,
         },
         _ => ModelTestRow {
             model:    model.id.clone(),
-            provider: model.provider,
+            provider: model.provider.clone(),
             result:   ModelTestResultKind::Fail,
             detail:   None,
             error:    Some(
@@ -243,6 +251,8 @@ async fn test_models_via_server(
     let mut skipped = 0u32;
     let mut skipped_providers: Vec<String> = Vec::new();
     if let Some(model_id) = model {
+        let listed_models = client.list_models(None, Some(model_id)).await?;
+        let listed_info = find_model_by_id_or_alias(&listed_models, model_id);
         if !json_output {
             eprint!("Testing {model_id}...");
         }
@@ -253,12 +263,9 @@ async fn test_models_via_server(
 
         let (info, result_color, status) = match result {
             Ok(resp) => {
-                let info = Catalog::builtin()
-                    .get(&resp.model_id)
-                    .cloned()
-                    .with_context(|| {
-                        format!("Unknown model returned by server: {}", resp.model_id)
-                    })?;
+                let info = find_model_by_id_or_alias(&listed_models, &resp.model_id).with_context(
+                    || format!("Unknown model returned by server: {}", resp.model_id),
+                )?;
                 if resp.status == api_types::ModelTestResultStatus::Ok {
                     (info, Color::Green, "ok".to_string())
                 } else if resp.status == api_types::ModelTestResultStatus::Skip {
@@ -277,10 +284,7 @@ async fn test_models_via_server(
                 bail!("Unknown model: {model_id}");
             }
             Err(err) => {
-                let info = Catalog::builtin()
-                    .get(model_id)
-                    .cloned()
-                    .with_context(|| format!("Unknown model: {model_id}"))?;
+                let info = listed_info.with_context(|| format!("Unknown model: {model_id}"))?;
                 failures += 1;
                 (info, Color::Red, format!("error: {err}"))
             }
@@ -307,7 +311,7 @@ async fn test_models_via_server(
 
         for info in &unconfigured {
             skipped += 1;
-            let provider_name = info.provider.display_name().to_string();
+            let provider_name = Provider::display_name_for_id(&info.provider);
             if !skipped_providers.contains(&provider_name) {
                 skipped_providers.push(provider_name);
             }
@@ -464,7 +468,7 @@ impl Default for ModelsCommand {
 
 #[cfg(test)]
 mod tests {
-    use fabro_model::{ModelCosts, ModelFeatures, ModelLimits};
+    use fabro_model::{ModelCosts, ModelFeatures, ModelLimits, ReasoningEffortFeature};
 
     use super::*;
 
@@ -474,31 +478,66 @@ mod tests {
 
     fn test_model_json(id: &str, provider: Provider) -> serde_json::Value {
         serde_json::to_value(Model {
-            id: id.to_string(),
-            provider,
-            family: "test".to_string(),
-            display_name: format!("{id} display"),
-            limits: ModelLimits {
+            id:                   id.to_string(),
+            provider:             provider.id(),
+            family:               "test".to_string(),
+            display_name:         format!("{id} display"),
+            limits:               ModelLimits {
                 context_window: 128_000,
                 max_output:     Some(4096),
             },
-            training: None,
-            knowledge_cutoff: None,
-            features: ModelFeatures {
-                tools:     true,
-                vision:    false,
-                reasoning: false,
-                effort:    false,
+            training:             None,
+            knowledge_cutoff:     None,
+            features:             ModelFeatures {
+                tools:            true,
+                vision:           false,
+                reasoning:        false,
+                reasoning_effort: ReasoningEffortFeature::None,
+                prompt_cache:     false,
+                effort:           false,
             },
-            costs: ModelCosts {
+            costs:                ModelCosts {
                 input_cost_per_mtok:       Some(1.0),
                 output_cost_per_mtok:      Some(2.0),
                 cache_input_cost_per_mtok: None,
             },
             estimated_output_tps: Some(100.0),
-            aliases: vec!["tm".to_string()],
-            default: false,
-            configured: false,
+            aliases:              vec!["tm".to_string()],
+            default:              false,
+            configured:           false,
+        })
+        .unwrap()
+    }
+
+    fn custom_model_json(id: &str, provider: &str) -> serde_json::Value {
+        serde_json::to_value(Model {
+            id:                   id.to_string(),
+            provider:             ProviderId::new(provider),
+            family:               "test".to_string(),
+            display_name:         format!("{id} display"),
+            limits:               ModelLimits {
+                context_window: 128_000,
+                max_output:     Some(4096),
+            },
+            training:             None,
+            knowledge_cutoff:     None,
+            features:             ModelFeatures {
+                tools:            true,
+                vision:           false,
+                reasoning:        false,
+                reasoning_effort: ReasoningEffortFeature::None,
+                prompt_cache:     false,
+                effort:           false,
+            },
+            costs:                ModelCosts {
+                input_cost_per_mtok:       Some(1.0),
+                output_cost_per_mtok:      Some(2.0),
+                cache_input_cost_per_mtok: None,
+            },
+            estimated_output_tps: Some(100.0),
+            aliases:              vec![],
+            default:              false,
+            configured:           true,
         })
         .unwrap()
     }
@@ -663,6 +702,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn single_model_test_uses_server_model_metadata_for_custom_models() {
+        let server = httpmock::MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method("GET")
+                    .path("/api/v1/models")
+                    .query_param("page[limit]", "100")
+                    .query_param("page[offset]", "0")
+                    .query_param("query", "venice-large");
+                then.status(200)
+                    .header("Content-Type", "application/json")
+                    .body(
+                        serde_json::json!({
+                            "data": [custom_model_json("venice-large", "venice")],
+                            "meta": { "has_more": false }
+                        })
+                        .to_string(),
+                    );
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method("POST").path("/api/v1/models/venice-large/test");
+                then.status(200)
+                    .header("Content-Type", "application/json")
+                    .body(
+                        serde_json::json!({
+                            "model_id": "venice-large",
+                            "status": "ok"
+                        })
+                        .to_string(),
+                    );
+            })
+            .await;
+
+        let client = test_client(&server.url(""));
+
+        test_models_via_server(
+            &client,
+            None,
+            Some("venice-large"),
+            false,
+            1,
+            &Styles::new(false),
+            true,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
     async fn fetch_models_from_server_parses_response() {
         let server = httpmock::MockServer::start_async().await;
         let mock = server
@@ -689,7 +779,7 @@ mod tests {
         mock.assert_async().await;
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, "test-model");
-        assert_eq!(models[0].provider, Provider::Anthropic);
+        assert_eq!(models[0].provider, Provider::Anthropic.id());
     }
 
     #[tokio::test]

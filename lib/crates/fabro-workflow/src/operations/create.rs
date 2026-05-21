@@ -10,13 +10,17 @@ use std::sync::Arc;
 
 use fabro_config::Storage;
 use fabro_graphviz::graph::{AttrValue, Graph};
-use fabro_model::{Catalog, Provider};
+#[cfg(test)]
+use fabro_model::catalog::LlmCatalogSettings;
+use fabro_model::{Catalog, ProviderId};
 use fabro_sandbox::SandboxProvider;
 use fabro_store::Database;
-use fabro_template::{TemplateContext, render as render_template};
+use fabro_template::{TemplateContext, TemplateError, render as render_template, render_lenient};
 use fabro_types::settings::run::{RunMode, RunNamespace};
 use fabro_types::{ForkSourceRef, GitContext, RunId, RunProvenance, WorkflowSettings};
+use fabro_util::error::collect_chain;
 use fabro_util::json::normalize_json_value;
+use fabro_validate::{Diagnostic, Severity};
 use tokio::task::spawn_blocking;
 
 use super::source::{ResolveWorkflowInput, WorkflowInput, resolve_workflow};
@@ -46,7 +50,7 @@ pub struct CreateRunInput {
     pub git: Option<GitContext>,
     pub fork_source_ref: Option<ForkSourceRef>,
     pub provenance: Option<RunProvenance>,
-    pub configured_providers: Vec<Provider>,
+    pub configured_providers: Vec<ProviderId>,
     /// Public URL where this run can be viewed in the web UI, when the server
     /// has the web UI enabled. Recorded on the `run.created` event so attach
     /// replays can surface the link.
@@ -71,14 +75,17 @@ struct PersistCreateOptions {
     git:                  Option<GitContext>,
     fork_source_ref:      Option<ForkSourceRef>,
     provenance:           Option<RunProvenance>,
-    configured_providers: Vec<Provider>,
+    configured_providers: Vec<ProviderId>,
+    catalog:              Arc<Catalog>,
 }
 
-/// Resolve workflow inputs, normalize settings, and persist a run directory.
+/// Resolve workflow inputs, normalize settings using the caller-provided
+/// catalog, and persist a run directory.
 pub async fn create(
     store: &Database,
     request: CreateRunInput,
     storage_root: PathBuf,
+    catalog: Arc<Catalog>,
 ) -> Result<CreatedRun, Error> {
     let resolved = resolve_workflow(ResolveWorkflowInput {
         workflow: request.workflow,
@@ -142,6 +149,7 @@ pub async fn create(
                 fork_source_ref,
                 provenance,
                 configured_providers,
+                catalog,
             },
             current_dir,
             file_resolver,
@@ -149,7 +157,7 @@ pub async fn create(
         )
     })
     .await
-    .map_err(|err| Error::engine_with_source("workflow create task failed", &err))??;
+    .map_err(|err| Error::engine_with_source("workflow create task failed", err))??;
 
     let workflow_config = resolved
         .workflow_toml_path
@@ -271,6 +279,22 @@ fn validate_sandbox_provider(run: &RunNamespace) -> Result<(), Error> {
     Ok(())
 }
 
+/// How the template-expansion pass should treat undefined input variables.
+///
+/// Validate is structural — it should not fail just because the user has not
+/// bound `{{ inputs.* }}` yet. Run-start is strict — missing inputs are real
+/// errors. Splitting the two lets validate work on a bare `.fabro` while
+/// run-start preserves its current hard-fail behavior.
+#[derive(Clone, Copy, Debug)]
+pub enum RenderMode {
+    /// Undefined inputs are hard errors. Used by run-create.
+    Strict,
+    /// Undefined inputs render as empty and become warning diagnostics on the
+    /// returned `Validated`, so structural lints still run. Used by
+    /// `fabro validate`.
+    Structural,
+}
+
 fn create_from_source(
     dot_source: &str,
     options: PersistCreateOptions,
@@ -285,6 +309,8 @@ fn create_from_source(
         Vec::new(),
         Some(&options.settings),
         goal_override,
+        RenderMode::Strict,
+        &options.catalog,
     )?;
 
     if validated.has_errors() {
@@ -303,10 +329,30 @@ pub(super) fn preprocess_and_validate(
     custom_transforms: Vec<Box<dyn Transform>>,
     settings: Option<&WorkflowSettings>,
     goal_override: Option<&str>,
+    render_mode: RenderMode,
+    catalog: &Arc<Catalog>,
 ) -> Result<Validated, Error> {
     let inputs = run_inputs(settings);
-    let source = render_template(dot_source, &TemplateContext::for_input_scan(inputs.clone()))
-        .map_err(|error| Error::Parse(format!("template expansion failed: {error}")))?;
+    let template_ctx = TemplateContext::for_input_scan(inputs.clone());
+    let (source, template_diagnostics) = match render_mode {
+        RenderMode::Strict => {
+            let source = render_template(dot_source, &template_ctx)
+                .map_err(|err| template_parse_error(&err))?;
+            (source, Vec::new())
+        }
+        RenderMode::Structural => match render_template(dot_source, &template_ctx) {
+            Ok(source) => (source, Vec::new()),
+            Err(TemplateError::UndefinedVariable {
+                expression, line, ..
+            }) => {
+                let diagnostic = template_diagnostic(expression.as_deref(), line);
+                let source = render_lenient(dot_source, &template_ctx)
+                    .map_err(|err| template_parse_error(&err))?;
+                (source, vec![diagnostic])
+            }
+            Err(error) => return Err(template_parse_error(&error)),
+        },
+    };
 
     let mut parsed = pipeline::parse(&source)?;
     apply_goal_override(&mut parsed.graph, goal_override);
@@ -316,8 +362,46 @@ pub(super) fn preprocess_and_validate(
         file_resolver,
         inputs,
         custom_transforms,
+        catalog: Arc::clone(catalog),
     })?;
-    Ok(pipeline::validate(transformed, &[]))
+    let mut validated = pipeline::validate(transformed, catalog.as_ref(), &[]);
+    if !template_diagnostics.is_empty() {
+        validated.prepend_diagnostics(template_diagnostics);
+    }
+    Ok(validated)
+}
+
+const TEMPLATE_UNDEFINED_VARIABLE_RULE: &str = "template_undefined_variable";
+
+fn template_diagnostic(expression: Option<&str>, line: Option<u32>) -> Diagnostic {
+    let location = line.map(|l| format!(" at line {l}")).unwrap_or_default();
+    let (name, message) = match expression {
+        Some(expr) => (
+            expr,
+            format!("undefined template variable `{expr}`{location}"),
+        ),
+        None => (
+            "<unknown>",
+            format!("undefined template variable{location}"),
+        ),
+    };
+    Diagnostic {
+        rule: TEMPLATE_UNDEFINED_VARIABLE_RULE.to_owned(),
+        severity: Severity::Warning,
+        message,
+        node_id: None,
+        edge: None,
+        fix: Some(format!(
+            "bind `{name}` via `[run.inputs]` in workflow.toml, or pass `--input {name}=<value>`"
+        )),
+    }
+}
+
+fn template_parse_error(error: &TemplateError) -> Error {
+    Error::Parse(format!(
+        "template expansion failed: {}",
+        collect_chain(error).join(": ")
+    ))
 }
 
 fn run_inputs(settings: Option<&WorkflowSettings>) -> HashMap<String, toml::Value> {
@@ -350,12 +434,13 @@ fn persist_validated(
         fork_source_ref,
         provenance,
         configured_providers,
+        catalog,
     } = options;
 
     let settings = materialize_run(
         settings,
         validated.graph(),
-        Catalog::builtin(),
+        catalog.as_ref(),
         &configured_providers,
     );
 
@@ -433,6 +518,10 @@ mod tests {
             .expect("default settings should resolve")
     }
 
+    fn test_catalog() -> Arc<Catalog> {
+        Arc::new(Catalog::from_builtin_with_overrides(&LlmCatalogSettings::default()).unwrap())
+    }
+
     fn validate_dot(dot_source: &str, settings: WorkflowSettings) -> Validated {
         validate(ValidateInput {
             workflow: WorkflowInput::DotSource {
@@ -442,6 +531,8 @@ mod tests {
             settings,
             cwd: PathBuf::from("."),
             custom_transforms: Vec::new(),
+            catalog: test_catalog(),
+            mode: RenderMode::Structural,
         })
         .unwrap()
     }
@@ -461,6 +552,64 @@ mod tests {
         assert_eq!(validated.graph().name, "Test");
         assert!(validated.graph().find_start_node().is_some());
         assert!(validated.graph().find_exit_node().is_some());
+    }
+
+    #[test]
+    fn validate_with_unbound_inputs_warns_but_succeeds() {
+        let dot = r#"digraph Test {
+            graph [goal="Build feature"]
+            start [shape=Mdiamond, label="Start"]
+            exit  [shape=Msquare,  label="Exit"]
+            work  [label="Work", prompt="Work on {{ inputs.app_dir }}"]
+            start -> work -> exit
+        }"#;
+        let validated = validate_dot(dot, WorkflowSettings::default());
+        validated.raise_on_errors().unwrap();
+
+        let diagnostic = validated
+            .diagnostics()
+            .iter()
+            .find(|d| d.rule == TEMPLATE_UNDEFINED_VARIABLE_RULE)
+            .expect("expected a template_undefined_variable diagnostic");
+        assert_eq!(diagnostic.severity, Severity::Warning);
+        assert!(
+            diagnostic.message.contains("inputs.app_dir"),
+            "missing variable in: {}",
+            diagnostic.message
+        );
+    }
+
+    #[test]
+    fn strict_render_hard_fails_on_unbound_inputs() {
+        let dot = r#"digraph Test {
+            graph [goal="Build {{ inputs.app_dir }}"]
+            start [shape=Mdiamond, label="Start"]
+            exit  [shape=Msquare,  label="Exit"]
+            start -> exit
+        }"#;
+        let result = preprocess_and_validate(
+            dot,
+            None,
+            None,
+            Vec::new(),
+            Some(&WorkflowSettings::default()),
+            None,
+            RenderMode::Strict,
+            &test_catalog(),
+        );
+
+        let Err(err) = result else {
+            panic!("expected strict mode to hard-fail on unbound inputs");
+        };
+        let message = err.to_string();
+        assert!(
+            message.contains("template expansion failed"),
+            "missing prefix in: {message}"
+        );
+        assert!(
+            message.contains("inputs.app_dir"),
+            "missing variable in: {message}"
+        );
     }
 
     #[test]
@@ -561,6 +710,8 @@ mod tests {
             settings:          WorkflowSettings::default(),
             cwd:               PathBuf::from("."),
             custom_transforms: Vec::new(),
+            catalog:           test_catalog(),
+            mode:              RenderMode::Strict,
         });
         assert!(result.is_err());
     }
@@ -604,6 +755,8 @@ mod tests {
             settings:          WorkflowSettings::default(),
             cwd:               PathBuf::from("."),
             custom_transforms: vec![Box::new(TagTransform)],
+            catalog:           test_catalog(),
+            mode:              RenderMode::Strict,
         })
         .unwrap();
         validated.raise_on_errors().unwrap();
@@ -637,6 +790,8 @@ mod tests {
             settings:          WorkflowSettings::default(),
             cwd:               dir.path().to_path_buf(),
             custom_transforms: Vec::new(),
+            catalog:           test_catalog(),
+            mode:              RenderMode::Strict,
         })
         .unwrap();
         validated.raise_on_errors().unwrap();
@@ -677,6 +832,8 @@ mod tests {
             settings:          WorkflowSettings::default(),
             cwd:               PathBuf::from("."),
             custom_transforms: Vec::new(),
+            catalog:           test_catalog(),
+            mode:              RenderMode::Strict,
         })
         .unwrap();
 
@@ -721,6 +878,7 @@ mod tests {
                 web_url: None,
             },
             storage_root,
+            test_catalog(),
         )
         .await
         .unwrap_err();
@@ -765,6 +923,7 @@ mod tests {
                 web_url: None,
             },
             storage_root,
+            test_catalog(),
         )
         .await
         .unwrap_err();
@@ -831,6 +990,7 @@ mod tests {
                 web_url: None,
             },
             storage_root.clone(),
+            test_catalog(),
         )
         .await
         .unwrap();
@@ -940,6 +1100,7 @@ mod tests {
                 web_url: None,
             },
             storage_root,
+            test_catalog(),
         )
         .await
         .unwrap();
@@ -983,6 +1144,7 @@ mod tests {
                 web_url: None,
             },
             storage_root,
+            test_catalog(),
         )
         .await
         .unwrap();
@@ -1048,6 +1210,7 @@ mod tests {
                 web_url: None,
             },
             storage_dir.clone(),
+            test_catalog(),
         )
         .await
         .unwrap();
@@ -1106,6 +1269,7 @@ mod tests {
                 web_url: None,
             },
             storage_dir,
+            test_catalog(),
         )
         .await
         .unwrap();

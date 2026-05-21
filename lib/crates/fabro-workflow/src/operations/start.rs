@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use fabro_auth::configured_providers_from_process_env;
+use fabro_auth::{CredentialSource, EnvCredentialSource, VaultCredentialSource};
 use fabro_interview::{AutoApproveInterviewer, Interviewer};
 use fabro_mcp::config::{McpServerSettings, McpTransport};
-use fabro_model::{Catalog, FallbackTarget, Provider};
+use fabro_model::{AgentProfileKind, Catalog, FallbackTarget, Provider, ProviderId, adapter};
 use fabro_sandbox::config::{
     DaytonaNetwork, DaytonaSnapshotSettings, DockerfileSource as SandboxDockerfileSource,
 };
@@ -79,6 +79,7 @@ struct RunSession {
     workflow_bundle:   Option<Arc<WorkflowBundle>>,
     run_control:       Option<Arc<RunControlState>>,
     vault:             Option<Arc<AsyncRwLock<Vault>>>,
+    catalog:           Arc<Catalog>,
 }
 
 pub struct StartServices {
@@ -96,6 +97,7 @@ pub struct StartServices {
     /// sandbox env. Empty when github integration has no permissions.
     pub github_permissions: HashMap<String, String>,
     pub vault:              Option<Arc<AsyncRwLock<Vault>>>,
+    pub catalog:            Arc<Catalog>,
     pub on_node:            crate::OnNodeCallback,
     pub registry_override:  Option<Arc<HandlerRegistry>>,
 }
@@ -260,16 +262,16 @@ async fn persist_terminal_engine_failure(
         RunStatus::Failed { reason } => reason,
         _ => FailureReason::WorkflowError,
     };
-    if let Err(err) = append_event_to_sink(event_sink, &run_id, &Event::WorkflowRunFailed {
-        error: error.clone(),
-        duration_ms: crate::millis_u64(duration),
+    let failure_event = Event::workflow_run_failed_from_error(
+        error,
+        crate::millis_u64(duration),
         reason,
-        git_commit_sha: None,
-        final_patch: None,
-        diff_summary: None,
-    })
-    .await
-    {
+        None,
+        None,
+        None,
+        None,
+    );
+    if let Err(err) = append_event_to_sink(event_sink, &run_id, &failure_event).await {
         tracing::warn!(error = %err, "Failed to append terminal engine failure event");
     }
 }
@@ -287,13 +289,7 @@ impl RunSession {
             .state()
             .await
             .map_err(|err| Error::engine(err.to_string()))?;
-        let git = state.start.and_then(|start| {
-            start.run_branch.as_ref().map(|_| GitCheckpointOptions {
-                base_sha:    start.base_sha.clone(),
-                run_branch:  start.run_branch.clone(),
-                meta_branch: Some(metadata_branch_name(&record.run_id.to_string())),
-            })
-        });
+        let git = git_checkpoint_options_from_start(settings, &record.run_id, state.start);
         let definition_blob = state.spec.definition_blob;
         let accepted_definition = match definition_blob {
             Some(blob_id) => {
@@ -316,14 +312,11 @@ impl RunSession {
             } else {
                 sandbox_provider
             };
-        let configured = configured_providers_from_process_env(services.vault.as_ref()).await;
+        let catalog = Arc::clone(&services.catalog);
+        let configured =
+            configured_providers_for_start(services.vault.as_ref(), catalog.as_ref()).await;
         let model = resolved.model.name.as_ref().map_or_else(
-            || {
-                Catalog::builtin()
-                    .default_for_configured(&configured)
-                    .id
-                    .clone()
-            },
+            || catalog.default_for_configured_ids(&configured).id.clone(),
             InterpString::as_source,
         );
         let provider = resolved
@@ -333,14 +326,41 @@ impl RunSession {
             .map(InterpString::as_source)
             .filter(|value| !value.is_empty());
 
-        let provider_enum: Provider = match provider.as_deref() {
-            Some(value) => value
-                .parse::<Provider>()
-                .map_err(|_| Error::Precondition(format!("unknown provider: {value}")))?,
-            None => Provider::default_for_configured(&configured),
+        let provider_id = if let Some(value) = provider.as_deref() {
+            let provider_id = ProviderId::from(value);
+            catalog
+                .provider(&provider_id)
+                .ok_or_else(|| {
+                    Error::Precondition(format!("Provider \"{value}\" is not configured"))
+                })?
+                .id
+                .clone()
+        } else if let Some(model) = catalog.get(&model) {
+            model.provider.clone()
+        } else {
+            catalog
+                .default_for_configured_ids(&configured)
+                .provider
+                .clone()
         };
 
-        let fallback_chain = resolve_fallback_chain(provider_enum, &model, &resolved.model);
+        let catalog_provider = catalog.provider(&provider_id).ok_or_else(|| {
+            Error::Precondition(format!("Provider \"{provider_id}\" is not configured"))
+        })?;
+        let profile_kind = adapter::get(&catalog_provider.adapter)
+            .map(|metadata| metadata.default_profile)
+            .ok_or_else(|| {
+                Error::Precondition(format!(
+                    "Provider \"{provider_id}\" uses unknown adapter \"{}\"",
+                    catalog_provider.adapter,
+                ))
+            })?;
+        let provider_enum = Provider::from_id(&provider_id).unwrap_or_else(|| {
+            profile_provider_for_custom_provider(profile_kind, &catalog_provider.adapter)
+        });
+
+        let fallback_chain =
+            resolve_fallback_chain(catalog.as_ref(), &provider_id, &model, &resolved.model);
         let mcp_servers = resolved
             .agent
             .mcps
@@ -353,7 +373,7 @@ impl RunSession {
                 working_directory: working_directory.clone(),
             },
             SandboxProvider::Docker => SandboxSpec::Docker {
-                config:           resolve_docker_config(resolved).unwrap_or_default(),
+                config:           resolve_docker_config(resolved),
                 github_app:       services.github_app.clone(),
                 run_id:           Some(record.run_id),
                 clone_origin_url: record.repo_origin_url().map(str::to_string),
@@ -369,7 +389,7 @@ impl RunSession {
                     None => None,
                 };
                 SandboxSpec::Daytona {
-                    config: Box::new(resolve_daytona_config(resolved).unwrap_or_default()),
+                    config: Box::new(resolve_daytona_config(resolved)),
                     github_app: services.github_app.clone(),
                     run_id: Some(record.run_id),
                     clone_origin_url: record.repo_origin_url().map(str::to_string),
@@ -379,12 +399,8 @@ impl RunSession {
             }
         };
 
-        let toml_env: HashMap<String, String> = resolved
-            .sandbox
-            .env
-            .iter()
-            .map(|(k, v)| (k.clone(), resolve_interp(v)))
-            .collect();
+        let toml_env =
+            resolve_sandbox_toml_env(&resolved.sandbox.env, services.vault.as_ref()).await;
         let github_permissions: Option<HashMap<String, String>> =
             (!services.github_permissions.is_empty()).then(|| services.github_permissions.clone());
         let sandbox_env = SandboxEnvSpec {
@@ -417,8 +433,11 @@ impl RunSession {
             llm: LlmSpec {
                 model: model.clone(),
                 provider: provider_enum,
+                provider_id: provider_id.clone(),
+                profile_kind,
                 fallback_chain,
                 mcp_servers,
+                model_controls: resolved.model.controls.clone(),
                 dry_run: resolved.execution.mode == RunMode::DryRun,
             },
             interviewer,
@@ -449,14 +468,85 @@ impl RunSession {
             workflow_path,
             workflow_bundle,
             vault: services.vault,
+            catalog,
         })
     }
 }
 
+async fn configured_providers_for_start(
+    vault: Option<&Arc<AsyncRwLock<Vault>>>,
+    catalog: &Catalog,
+) -> Vec<ProviderId> {
+    let source: Arc<dyn CredentialSource> = match vault {
+        Some(vault) => Arc::new(VaultCredentialSource::with_env_lookup(
+            Arc::clone(vault),
+            process_env_var,
+        )),
+        None => Arc::new(EnvCredentialSource::new()),
+    };
+    source.configured_providers(catalog).await
+}
+
+fn profile_provider_for_custom_provider(profile_kind: AgentProfileKind, adapter: &str) -> Provider {
+    match (profile_kind, adapter) {
+        (AgentProfileKind::Anthropic, _) => Provider::Anthropic,
+        (AgentProfileKind::Gemini, _) => Provider::Gemini,
+        (AgentProfileKind::OpenAi, "openai_compatible") => Provider::OpenAiCompatible,
+        (AgentProfileKind::OpenAi, _) => Provider::OpenAi,
+    }
+}
+
 fn resolve_interp(value: &InterpString) -> String {
+    resolve_interp_with_lookup(value, process_env_var)
+}
+
+async fn resolve_sandbox_toml_env(
+    env: &HashMap<String, InterpString>,
+    vault: Option<&Arc<AsyncRwLock<Vault>>>,
+) -> HashMap<String, String> {
+    let vault_env = match vault {
+        Some(vault) => vault.read().await.snapshot(),
+        None => HashMap::new(),
+    };
+
+    env.iter()
+        .map(|(key, value)| {
+            let resolved = resolve_interp_with_lookup(value, |name| {
+                process_env_var(name).or_else(|| vault_env.get(name).cloned())
+            });
+            (key.clone(), resolved)
+        })
+        .collect()
+}
+
+fn resolve_interp_with_lookup<F>(value: &InterpString, lookup: F) -> String
+where
+    F: FnMut(&str) -> Option<String>,
+{
     value
-        .resolve(process_env_var)
+        .resolve(lookup)
         .map_or_else(|_| value.as_source(), |resolved| resolved.value)
+}
+
+fn git_checkpoint_options_from_start(
+    settings: &fabro_types::WorkflowSettings,
+    run_id: &RunId,
+    start: Option<fabro_types::StartRecord>,
+) -> Option<GitCheckpointOptions> {
+    if !settings.run.run_branch.enabled {
+        return None;
+    }
+
+    let start = start?;
+    start.run_branch.as_ref().map(|_| GitCheckpointOptions {
+        base_sha:    start.base_sha.clone(),
+        run_branch:  start.run_branch.clone(),
+        meta_branch: settings
+            .run
+            .meta_branch
+            .enabled
+            .then(|| metadata_branch_name(&run_id.to_string())),
+    })
 }
 
 #[expect(
@@ -492,20 +582,31 @@ fn resolve_sandbox_provider(settings: &ResolvedRunSettings) -> Result<SandboxPro
     .map_or_else(|| Ok(SandboxProvider::default()), Ok)
 }
 
-fn resolve_daytona_config(settings: &ResolvedRunSettings) -> Option<DaytonaConfig> {
-    settings
+fn resolve_daytona_config(settings: &ResolvedRunSettings) -> DaytonaConfig {
+    let mut config = settings
         .sandbox
         .daytona
         .as_ref()
-        .map(runtime_daytona_config)
+        .map(|daytona| runtime_daytona_config(daytona, !settings.clone.enabled))
+        .unwrap_or_default();
+    config.skip_clone = !settings.clone.enabled;
+    config
 }
 
-fn resolve_docker_config(settings: &ResolvedRunSettings) -> Option<DockerSandboxOptions> {
-    settings.sandbox.docker.as_ref().map(runtime_docker_config)
+fn resolve_docker_config(settings: &ResolvedRunSettings) -> DockerSandboxOptions {
+    let mut config = settings
+        .sandbox
+        .docker
+        .as_ref()
+        .map(|docker| runtime_docker_config(docker, !settings.clone.enabled))
+        .unwrap_or_default();
+    config.skip_clone = !settings.clone.enabled;
+    config
 }
 
 fn resolve_fallback_chain(
-    provider: Provider,
+    catalog: &Catalog,
+    provider: &ProviderId,
     model: &str,
     settings: &ResolvedRunModelSettings,
 ) -> Vec<FallbackTarget> {
@@ -526,7 +627,7 @@ fn resolve_fallback_chain(
             .or_default()
             .push(model_ref.to_string());
     }
-    Catalog::builtin().build_fallback_chain(provider, model, &by_provider)
+    catalog.build_fallback_chain(provider, model, &by_provider)
 }
 
 fn runtime_mcp_server(settings: &ResolvedMcpServerSettings) -> McpServerSettings {
@@ -554,11 +655,11 @@ fn runtime_mcp_server(settings: &ResolvedMcpServerSettings) -> McpServerSettings
     }
 }
 
-fn runtime_daytona_config(settings: &DaytonaSettings) -> DaytonaConfig {
+fn runtime_daytona_config(settings: &DaytonaSettings, skip_clone: bool) -> DaytonaConfig {
     DaytonaConfig {
         auto_stop_interval: settings.auto_stop_interval,
-        labels:             (!settings.labels.is_empty()).then_some(settings.labels.clone()),
-        snapshot:           settings
+        labels: (!settings.labels.is_empty()).then_some(settings.labels.clone()),
+        snapshot: settings
             .snapshot
             .as_ref()
             .map(|snapshot| DaytonaSnapshotSettings {
@@ -578,18 +679,18 @@ fn runtime_daytona_config(settings: &DaytonaSettings) -> DaytonaConfig {
                         }
                     }),
             }),
-        network:            settings.network.as_ref().map(|network| match network {
+        network: settings.network.as_ref().map(|network| match network {
             DaytonaNetworkLayer::Block => DaytonaNetwork::Block,
             DaytonaNetworkLayer::AllowAll => DaytonaNetwork::AllowAll,
             DaytonaNetworkLayer::AllowList { allow_list } => {
                 DaytonaNetwork::AllowList(allow_list.clone())
             }
         }),
-        skip_clone:         settings.skip_clone,
+        skip_clone,
     }
 }
 
-fn runtime_docker_config(settings: &DockerSettings) -> DockerSandboxOptions {
+fn runtime_docker_config(settings: &DockerSettings, skip_clone: bool) -> DockerSandboxOptions {
     let mut env_vars = settings
         .env_vars
         .iter()
@@ -603,7 +704,7 @@ fn runtime_docker_config(settings: &DockerSettings) -> DockerSandboxOptions {
         memory_limit: settings.memory_limit,
         cpu_quota: settings.cpu_quota,
         env_vars,
-        skip_clone: settings.skip_clone,
+        skip_clone,
         ..DockerSandboxOptions::default()
     }
 }
@@ -717,6 +818,13 @@ impl RunSession {
                         }
                     }
                 }
+                event if matches!(&event.body, EventBody::RunFailed(_)) => {
+                    if let EventBody::RunFailed(props) = &event.body {
+                        if let Some(sha) = props.final_git_commit_sha.as_ref() {
+                            *sha_clone.lock().unwrap() = Some(sha.clone());
+                        }
+                    }
+                }
                 event if matches!(&event.body, EventBody::GitCommit(_)) => {
                     if let EventBody::GitCommit(props) = &event.body {
                         *sha_clone.lock().unwrap() = Some(props.sha.clone());
@@ -738,6 +846,7 @@ impl RunSession {
             llm: self.llm,
             interviewer: self.interviewer,
             steering_hub: Arc::clone(&self.steering_hub),
+            catalog: Arc::clone(&self.catalog),
             lifecycle: self.lifecycle,
             run_options,
             workflow_path: self.workflow_path,
@@ -861,15 +970,16 @@ impl Drop for DetachedRunBootstrapGuard {
             let event_sink = self.event_sink.clone();
             if let Ok(handle) = Handle::try_current() {
                 handle.spawn(async move {
-                    let _ = append_event_to_sink(&event_sink, &run_id, &Event::WorkflowRunFailed {
-                        error: Error::engine(reason.to_string()),
-                        duration_ms: 0,
+                    let failure_event = Event::workflow_run_failed_from_error(
+                        &Error::engine(reason.to_string()),
+                        0,
                         reason,
-                        git_commit_sha: None,
-                        final_patch: None,
-                        diff_summary: None,
-                    })
-                    .await;
+                        None,
+                        None,
+                        None,
+                        None,
+                    );
+                    let _ = append_event_to_sink(&event_sink, &run_id, &failure_event).await;
                 });
             }
         }
@@ -927,15 +1037,16 @@ impl Drop for DetachedRunCompletionGuard {
         let run_id = self.run_id;
         if let Ok(handle) = Handle::try_current() {
             handle.spawn(async move {
-                let _ = append_event_to_sink(&event_sink, &run_id, &Event::WorkflowRunFailed {
-                    error: Error::engine(message.to_string()),
-                    duration_ms: 0,
+                let failure_event = Event::workflow_run_failed_from_error(
+                    &Error::engine(message.to_string()),
+                    0,
                     reason,
-                    git_commit_sha: None,
-                    final_patch: None,
-                    diff_summary: None,
-                })
-                .await;
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+                let _ = append_event_to_sink(&event_sink, &run_id, &failure_event).await;
                 let _ = append_event_to_sink(&event_sink, &run_id, &Event::RunNotice {
                     level:            RunNoticeLevel::Error,
                     code:             code.to_string(),
@@ -958,16 +1069,9 @@ async fn persist_detached_failure(
 ) -> Result<(), Error> {
     let message = error.to_string();
 
-    if let Err(err) = append_event_to_sink(event_sink, &run_id, &Event::WorkflowRunFailed {
-        error: error.clone(),
-        duration_ms: 0,
-        reason,
-        git_commit_sha: None,
-        final_patch: None,
-        diff_summary: None,
-    })
-    .await
-    {
+    let failure_event =
+        Event::workflow_run_failed_from_error(error, 0, reason, None, None, None, None);
+    if let Err(err) = append_event_to_sink(event_sink, &run_id, &failure_event).await {
         tracing::warn!(error = %err, "Failed to append detached failure event");
     }
 
@@ -992,7 +1096,8 @@ mod tests {
     use std::time::Duration;
 
     use chrono::Utc;
-    use fabro_config::{RunExecutionLayer, RunLayer, WorkflowSettingsBuilder};
+    use fabro_config::{RunCloneLayer, RunExecutionLayer, RunLayer, WorkflowSettingsBuilder};
+    use fabro_model::catalog::LlmCatalogSettings;
     use fabro_store::Database;
     use fabro_types::settings::run::RunMode;
     use fabro_types::{WorkflowSettings, fixtures};
@@ -1043,6 +1148,59 @@ mod tests {
             .expect("settings should resolve")
     }
 
+    fn test_catalog() -> Arc<Catalog> {
+        Arc::new(
+            Catalog::from_builtin_with_overrides(&LlmCatalogSettings::default())
+                .expect("default catalog should build"),
+        )
+    }
+
+    #[test]
+    fn runtime_clone_config_uses_run_level_clone_policy() {
+        let settings = settings_from_run_layer(RunLayer {
+            clone: Some(RunCloneLayer {
+                enabled: Some(false),
+            }),
+            ..RunLayer::default()
+        });
+
+        assert!(resolve_docker_config(&settings.run).skip_clone);
+        assert!(resolve_daytona_config(&settings.run).skip_clone);
+    }
+
+    #[test]
+    fn start_record_git_options_honor_disabled_run_branch() {
+        let mut settings = WorkflowSettings::default();
+        settings.run.run_branch.enabled = false;
+        let start = fabro_types::StartRecord {
+            start_time: Utc::now(),
+            run_branch: Some("fabro/run/test".to_string()),
+            base_sha:   Some("abc123".to_string()),
+        };
+
+        assert!(
+            git_checkpoint_options_from_start(&settings, &fixtures::RUN_1, Some(start)).is_none()
+        );
+    }
+
+    #[test]
+    fn start_record_git_options_honor_disabled_meta_branch() {
+        let mut settings = WorkflowSettings::default();
+        settings.run.meta_branch.enabled = false;
+        let start = fabro_types::StartRecord {
+            start_time: Utc::now(),
+            run_branch: Some("fabro/run/test".to_string()),
+            base_sha:   Some("abc123".to_string()),
+        };
+
+        let git = git_checkpoint_options_from_start(&settings, &fixtures::RUN_1, Some(start))
+            .expect("run branch should remain enabled");
+
+        assert_eq!(git.run_branch.as_deref(), Some("fabro/run/test"));
+        assert_eq!(git.base_sha.as_deref(), Some("abc123"));
+        assert_eq!(git.meta_branch, None);
+    }
+
     async fn persisted_workflow(dot: &str, storage_root: &Path) -> (Persisted, Arc<Database>) {
         let store = memory_store();
         let created = crate::operations::create(
@@ -1076,6 +1234,7 @@ mod tests {
                 web_url: None,
             },
             storage_root.to_path_buf(),
+            test_catalog(),
         )
         .await
         .unwrap();
@@ -1088,6 +1247,32 @@ mod tests {
         registry.register("exit", Box::new(ExitHandler));
         registry.register("stack.manager_loop", Box::new(SubWorkflowHandler));
         registry
+    }
+
+    #[tokio::test]
+    async fn sandbox_toml_env_resolves_environment_secrets_from_vault() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut vault = Vault::load(temp.path().join("vault.json")).unwrap();
+        vault
+            .set(
+                "APIFY_TOKEN",
+                "vault-apify-token",
+                fabro_vault::SecretType::Environment,
+                None,
+            )
+            .unwrap();
+        let vault = Arc::new(AsyncRwLock::new(vault));
+        let input = HashMap::from([(
+            "APIFY_TOKEN".to_string(),
+            InterpString::parse("{{ env.APIFY_TOKEN }}"),
+        )]);
+
+        let resolved = resolve_sandbox_toml_env(&input, Some(&vault)).await;
+
+        assert_eq!(
+            resolved.get("APIFY_TOKEN").map(String::as_str),
+            Some("vault-apify-token")
+        );
     }
 
     async fn test_start_services(
@@ -1110,6 +1295,7 @@ mod tests {
             github_app: None,
             github_permissions: HashMap::new(),
             vault: None,
+            catalog: test_catalog(),
             on_node: None,
             registry_override: Some(registry),
         }
@@ -1265,6 +1451,7 @@ mod tests {
                 web_url: None,
             },
             storage_root,
+            test_catalog(),
         )
         .await
         .unwrap();
@@ -1422,7 +1609,7 @@ mod tests {
             timestamp:            Utc::now(),
             status:               StageOutcome::Succeeded,
             duration_ms:          1,
-            failure_reason:       None,
+            failure:              None,
             final_git_commit_sha: None,
             stages:               vec![],
             billing:              None,

@@ -926,6 +926,9 @@ fn attach_json_errors_without_prompting_for_human_input() {
               "checkpoint": {
                 "exclude_globs": []
               },
+              "clone": {
+                "enabled": true
+              },
               "execution": {
                 "approval": "prompt",
                 "mode": "normal"
@@ -948,8 +951,16 @@ fn attach_json_errors_without_prompting_for_human_input() {
                 "provider": null,
                 "slack": null
               },
+              "meta_branch": {
+                "enabled": true,
+                "push": true
+              },
               "metadata": {},
               "model": {
+                "controls": {
+                  "reasoning_effort": null,
+                  "speed": null
+                },
                 "fallbacks": [],
                 "name": "gpt-5.4",
                 "provider": "openai"
@@ -960,6 +971,10 @@ fn attach_json_errors_without_prompting_for_human_input() {
                 "timeout_ms": 300000
               },
               "pull_request": null,
+              "run_branch": {
+                "enabled": true,
+                "push": true
+              },
               "sandbox": {
                 "daytona": null,
                 "devcontainer": false,
@@ -968,8 +983,7 @@ fn attach_json_errors_without_prompting_for_human_input() {
                   "env_vars": {},
                   "image": "buildpack-deps:noble",
                   "memory_limit": 4000000000,
-                  "network_mode": null,
-                  "skip_clone": false
+                  "network_mode": null
                 },
                 "env": {},
                 "preserve": false,

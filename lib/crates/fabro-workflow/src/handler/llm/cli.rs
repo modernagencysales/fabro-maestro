@@ -11,7 +11,9 @@ use fabro_agent::{Sandbox, StaticEnvProvider, ToolEnvProvider, shell_quote};
 use fabro_auth::CredentialResolver;
 use fabro_graphviz::graph::Node;
 use fabro_llm::types::TokenCounts;
-use fabro_model::Provider;
+use fabro_model::catalog::LlmCatalogSettings;
+use fabro_model::{Catalog, ModelRef, Provider};
+use fabro_types::settings::run::RunModelControls;
 use fabro_types::{CommandOutputStream, CommandTermination, LlmBackend};
 use fabro_util::time::elapsed_ms;
 use tokio_util::sync::CancellationToken;
@@ -40,6 +42,7 @@ fn cli_failure_detail(stdout: &str, stderr: &str, command: &str) -> String {
 
 use super::super::agent::{CodergenBackend, CodergenResult, CodergenRunRequest, OneShotRequest};
 use super::acp::AgentAcpBackend;
+use super::api::effective_request_controls;
 use super::launch_env::{AgentLaunchEnvRequest, resolve_agent_launch_env};
 use super::{changed_files, routing};
 use crate::error::Error;
@@ -77,6 +80,22 @@ impl AgentCli {
     }
 }
 
+/// Controls how much sandboxing or approval behavior the launched CLI owns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentCliRuntimePolicy {
+    /// Let the provider CLI use its own default permissions and sandbox rules.
+    CliDefault,
+    /// Fabro owns the outer sandbox/container, so the CLI runs non-interactive.
+    FabroExternalSandbox,
+}
+
+impl AgentCliRuntimePolicy {
+    #[must_use]
+    pub const fn default_for_provider(_provider: Provider) -> Self {
+        Self::FabroExternalSandbox
+    }
+}
+
 /// Verify the provider CLI exists in the sandbox. Fabro does not install agent
 /// CLIs at runtime; sandbox images or setup steps own tool installation.
 async fn verify_cli_available(
@@ -96,7 +115,7 @@ async fn verify_cli_available(
         )
         .await
         .map_err(|e| {
-            Error::handler_with_source(format!("Failed to check {cli_name} availability"), &e)
+            Error::handler_with_source(format!("Failed to check {cli_name} availability"), e)
         })?;
 
     if availability_check.is_success() {
@@ -124,6 +143,22 @@ pub fn is_cli_only_model(model: &str) -> bool {
 /// is piped into the command's stdin via `cat`.
 #[must_use]
 pub fn cli_command_for_provider(provider: Provider, model: &str, prompt_file: &str) -> String {
+    cli_command_for_provider_with_policy(
+        provider,
+        model,
+        prompt_file,
+        AgentCliRuntimePolicy::default_for_provider(provider),
+    )
+}
+
+/// Build the CLI command string for a given provider and runtime policy.
+#[must_use]
+pub fn cli_command_for_provider_with_policy(
+    provider: Provider,
+    model: &str,
+    prompt_file: &str,
+    runtime_policy: AgentCliRuntimePolicy,
+) -> String {
     let prompt_file = shell_quote(prompt_file);
     let model_flag = if model.is_empty() {
         String::new()
@@ -146,23 +181,43 @@ pub fn cli_command_for_provider(provider: Provider, model: &str, prompt_file: &s
     // launch wrapper (`setsid sh -c '...' </dev/null`) can clobber stdin
     // redirects in nested shells. A pipe creates an explicit new stdin.
     match provider {
-        // --full-auto: sandboxed auto-execution, escalates on request
         Provider::OpenAi
         | Provider::Kimi
         | Provider::Zai
         | Provider::Minimax
         | Provider::Inception
         | Provider::OpenAiCompatible => {
-            format!("cat {prompt_file} | codex exec --json --full-auto{model_flag}")
+            let policy_flags = match runtime_policy {
+                AgentCliRuntimePolicy::CliDefault => "",
+                // Fabro owns the surrounding sandbox. Disable Codex's internal sandbox
+                // so CLI stages also work in restricted containers such as Railway.
+                // --skip-git-repo-check allows external sandboxes without a checked-out repo.
+                AgentCliRuntimePolicy::FabroExternalSandbox => {
+                    " --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check"
+                }
+            };
+            format!("cat {prompt_file} | codex exec --json{policy_flags}{model_flag}")
         }
-        // --yolo: auto-approve all tool calls
-        Provider::Gemini => format!("cat {prompt_file} | gemini -o json --yolo{model_flag}"),
-        // --dangerously-skip-permissions: bypass all permission checks (required for
-        // non-interactive use). CLAUDECODE= unset to allow running inside a Claude Code
-        // session.
-        Provider::Anthropic => format!(
-            "cat {prompt_file} | CLAUDECODE= claude -p --verbose --output-format stream-json --dangerously-skip-permissions{model_flag}"
-        ),
+        Provider::Gemini => {
+            let policy_flags = match runtime_policy {
+                AgentCliRuntimePolicy::CliDefault => "",
+                // --yolo: auto-approve all tool calls for non-interactive execution.
+                AgentCliRuntimePolicy::FabroExternalSandbox => " --yolo",
+            };
+            format!("cat {prompt_file} | gemini -o json{policy_flags}{model_flag}")
+        }
+        Provider::Anthropic => {
+            let policy_flags = match runtime_policy {
+                AgentCliRuntimePolicy::CliDefault => "",
+                // --dangerously-skip-permissions: bypass all permission checks (required for
+                // non-interactive use). CLAUDECODE= unset to allow running inside a Claude Code
+                // session.
+                AgentCliRuntimePolicy::FabroExternalSandbox => " --dangerously-skip-permissions",
+            };
+            format!(
+                "cat {prompt_file} | CLAUDECODE= claude -p --verbose --output-format stream-json{policy_flags}{model_flag}"
+            )
+        }
     }
 }
 
@@ -332,9 +387,12 @@ pub fn parse_cli_response(provider: Provider, output: &str) -> Option<CliRespons
 pub struct AgentCliBackend {
     model: String,
     provider: Provider,
+    runtime_policy: AgentCliRuntimePolicy,
     tool_env: Option<Arc<dyn ToolEnvProvider>>,
     github_token_refresh_managed: bool,
     resolver: Option<CredentialResolver>,
+    run_model_controls: RunModelControls,
+    catalog: Arc<Catalog>,
 }
 
 impl AgentCliBackend {
@@ -343,9 +401,12 @@ impl AgentCliBackend {
         Self {
             model,
             provider,
+            runtime_policy: AgentCliRuntimePolicy::default_for_provider(provider),
             tool_env: None,
             github_token_refresh_managed: false,
             resolver: Some(resolver),
+            run_model_controls: RunModelControls::default(),
+            catalog: default_catalog(),
         }
     }
 
@@ -354,9 +415,12 @@ impl AgentCliBackend {
         Self {
             model,
             provider,
+            runtime_policy: AgentCliRuntimePolicy::default_for_provider(provider),
             tool_env: None,
             github_token_refresh_managed: false,
             resolver: None,
+            run_model_controls: RunModelControls::default(),
+            catalog: default_catalog(),
         }
     }
 
@@ -376,6 +440,31 @@ impl AgentCliBackend {
         self.github_token_refresh_managed = github_token_refresh_managed;
         self
     }
+
+    #[must_use]
+    pub fn with_run_model_controls(mut self, controls: RunModelControls) -> Self {
+        self.run_model_controls = controls;
+        self
+    }
+
+    #[must_use]
+    pub fn with_runtime_policy(mut self, runtime_policy: AgentCliRuntimePolicy) -> Self {
+        self.runtime_policy = runtime_policy;
+        self
+    }
+
+    #[must_use]
+    pub fn with_catalog(mut self, catalog: Arc<Catalog>) -> Self {
+        self.catalog = catalog;
+        self
+    }
+}
+
+fn default_catalog() -> Arc<Catalog> {
+    Arc::new(
+        Catalog::from_builtin_with_overrides(&LlmCatalogSettings::default())
+            .expect("default catalog should build"),
+    )
 }
 
 #[async_trait]
@@ -400,7 +489,7 @@ impl CodergenBackend for AgentCliBackend {
         sandbox
             .write_file(&prompt_path, prompt)
             .await
-            .map_err(|e| Error::handler_with_source("Failed to write prompt file", &e))?;
+            .map_err(|e| Error::handler_with_source("Failed to write prompt file", e))?;
 
         // 3. Build CLI command
         let model = node.model().unwrap_or(&self.model);
@@ -408,11 +497,18 @@ impl CodergenBackend for AgentCliBackend {
             .provider()
             .and_then(|s| s.parse::<Provider>().ok())
             .unwrap_or(self.provider);
+        let controls = effective_request_controls(
+            self.catalog.as_ref(),
+            &self.run_model_controls,
+            model,
+            node,
+        )?;
 
         let cli = AgentCli::for_provider(provider);
         verify_cli_available(cli, sandbox, &cancel_token).await?;
 
-        let command = cli_command_for_provider(provider, model, &prompt_path);
+        let command =
+            cli_command_for_provider_with_policy(provider, model, &prompt_path, self.runtime_policy);
         let stage_scope = StageScope::for_handler(context, &node.id);
         emitter.emit_scoped(
             &Event::AgentCliStarted {
@@ -429,6 +525,7 @@ impl CodergenBackend for AgentCliBackend {
         let launch_env = resolve_agent_launch_env(AgentLaunchEnvRequest {
             provider,
             cli,
+            catalog: self.catalog.as_ref(),
             resolver: self.resolver.as_ref(),
             tool_env: self.tool_env.as_ref(),
             github_token_refresh_managed: self.github_token_refresh_managed,
@@ -451,7 +548,7 @@ impl CodergenBackend for AgentCliBackend {
         sandbox
             .write_file(&env_path, &env_lines.join("\n"))
             .await
-            .map_err(|e| Error::handler_with_source("Failed to write env file", &e))?;
+            .map_err(|e| Error::handler_with_source("Failed to write env file", e))?;
 
         // Disable auto-stop so the sandbox stays alive during long CLI runs.
         if let Err(e) = sandbox.set_autostop_interval(0).await {
@@ -522,10 +619,7 @@ impl CodergenBackend for AgentCliBackend {
             Ok(streaming) => streaming,
             Err(err) => {
                 cleanup_temp_files().await;
-                return Err(Error::handler_with_source(
-                    "Failed to run CLI command",
-                    &err,
-                ));
+                return Err(Error::handler_with_source("Failed to run CLI command", err));
             }
         };
         let result = streaming.result;
@@ -622,12 +716,19 @@ impl CodergenBackend for AgentCliBackend {
         let (files_touched, last_file_touched) =
             changed_files::files_touched_since(sandbox, &files_before).await;
 
-        let stage_usage =
-            billed_model_usage_from_llm(model, provider, node.speed(), &TokenCounts {
+        let stage_usage = billed_model_usage_from_llm(
+            self.catalog.as_ref(),
+            &ModelRef {
+                provider: provider.id(),
+                model_id: model.to_string(),
+                speed:    controls.speed,
+            },
+            &TokenCounts {
                 input_tokens: parsed.input_tokens,
                 output_tokens: parsed.output_tokens,
                 ..TokenCounts::default()
-            });
+            },
+        );
 
         Ok(CodergenResult::Text {
             text: parsed.text,
@@ -736,6 +837,18 @@ mod tests {
         assert_eq!(AgentCli::Claude.name(), "claude");
         assert_eq!(AgentCli::Codex.name(), "codex");
         assert_eq!(AgentCli::Gemini.name(), "gemini");
+    }
+
+    #[test]
+    fn agent_cli_runtime_policy_names_external_sandbox_behavior() {
+        assert_eq!(
+            AgentCliRuntimePolicy::default_for_provider(Provider::OpenAi),
+            AgentCliRuntimePolicy::FabroExternalSandbox
+        );
+        assert_eq!(
+            AgentCliRuntimePolicy::default_for_provider(Provider::Anthropic),
+            AgentCliRuntimePolicy::FabroExternalSandbox
+        );
     }
 
     // -- verify_cli_available --
@@ -924,8 +1037,24 @@ mod tests {
     #[test]
     fn cli_command_for_codex() {
         let cmd = cli_command_for_provider(Provider::OpenAi, "gpt-5.3-codex", "/tmp/prompt.txt");
-        assert!(cmd.starts_with("cat /tmp/prompt.txt | codex exec --json --full-auto"));
+        assert!(cmd.starts_with(
+            "cat /tmp/prompt.txt | codex exec --json --dangerously-bypass-approvals-and-sandbox"
+        ));
+        assert!(cmd.contains("--skip-git-repo-check"));
         assert!(cmd.contains("-m gpt-5.3-codex"));
+    }
+
+    #[test]
+    fn cli_command_for_codex_default_cli_policy_keeps_codex_sandbox_flags_off() {
+        let cmd = cli_command_for_provider_with_policy(
+            Provider::OpenAi,
+            "gpt-5.3-codex",
+            "/tmp/prompt.txt",
+            AgentCliRuntimePolicy::CliDefault,
+        );
+        assert!(cmd.starts_with("cat /tmp/prompt.txt | codex exec --json"));
+        assert!(!cmd.contains("--dangerously-bypass-approvals-and-sandbox"));
+        assert!(!cmd.contains("--skip-git-repo-check"));
     }
 
     #[test]
@@ -949,7 +1078,10 @@ mod tests {
     #[test]
     fn cli_command_omits_model_when_empty() {
         let cmd = cli_command_for_provider(Provider::OpenAi, "", "/tmp/prompt.txt");
-        assert!(cmd.contains("codex exec --json --full-auto"));
+        assert!(cmd.contains(
+            "codex exec --json --dangerously-bypass-approvals-and-sandbox"
+        ));
+        assert!(cmd.contains("--skip-git-repo-check"));
         assert!(!cmd.contains("-m "));
         let cmd = cli_command_for_provider(Provider::Anthropic, "", "/tmp/prompt.txt");
         assert!(cmd.contains("--dangerously-skip-permissions"));

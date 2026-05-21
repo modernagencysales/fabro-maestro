@@ -3731,9 +3731,9 @@ components:
       name: provider
       in: query
       required: false
-      description: Filter models by provider name. Invalid values return `400`.
+      description: Filter models by provider ID. Unknown provider IDs return an empty result set.
       schema:
-        $ref: "#/components/schemas/Provider"
+        $ref: "#/components/schemas/ProviderId"
       example: anthropic
 
     ModelQueryFilter:
@@ -4377,18 +4377,10 @@ components:
         meta:
           $ref: "#/components/schemas/PaginationMeta"
 
-    Provider:
+    ProviderId:
       description: LLM provider identifier.
       type: string
-      enum:
-        - anthropic
-        - openai
-        - gemini
-        - kimi
-        - zai
-        - minimax
-        - inception
-        - openai_compatible
+      example: anthropic
 
     ModelLimits:
       description: Token limits for a model.
@@ -4408,6 +4400,13 @@ components:
           description: Maximum output tokens, if known.
           example: 128000
 
+    ReasoningEffortFeature:
+      description: Whether Fabro may expose reasoning effort levels for a model.
+      type: string
+      enum:
+        - levels
+        - none
+
     ModelFeatures:
       description: Capability flags for a model.
       type: object
@@ -4415,6 +4414,8 @@ components:
         - tools
         - vision
         - reasoning
+        - reasoning_effort
+        - prompt_cache
         - effort
       properties:
         tools:
@@ -4426,9 +4427,15 @@ components:
         reasoning:
           type: boolean
           description: Whether the model supports extended reasoning.
+        reasoning_effort:
+          $ref: "#/components/schemas/ReasoningEffortFeature"
+        prompt_cache:
+          type: boolean
+          description: Whether the model endpoint supports prompt caching.
         effort:
           type: boolean
-          description: Whether the model supports direct reasoning effort controls.
+          deprecated: true
+          description: Deprecated compatibility flag equivalent to reasoning_effort = levels.
 
     ModelCosts:
       description: Pricing per million tokens in USD.
@@ -4477,7 +4484,7 @@ components:
           description: Unique model identifier.
           example: "claude-opus-4-6"
         provider:
-          $ref: "#/components/schemas/Provider"
+          $ref: "#/components/schemas/ProviderId"
         family:
           type: string
           description: Model family grouping.
@@ -4911,6 +4918,67 @@ components:
         - launch_failed
         - bootstrap_failed
         - sandbox_init_failed
+
+    FailureCategory:
+      description: Product-level classification for grouping and retry policy.
+      type: string
+      enum:
+        - transient_infra
+        - deterministic
+        - budget_exhausted
+        - compilation_loop
+        - canceled
+        - structural
+
+    FailureSignature:
+      description: Stable normalized signature for grouping related failures.
+      type: string
+
+    ExecOutputTail:
+      description: Redacted tail of command stdout/stderr captured for diagnostics.
+      type: object
+      properties:
+        stdout:
+          type: ["string", "null"]
+        stderr:
+          type: ["string", "null"]
+        stdout_truncated:
+          type: boolean
+          default: false
+        stderr_truncated:
+          type: boolean
+          default: false
+
+    RunFailure:
+      description: Rich terminal run failure diagnostics.
+      type: object
+      required:
+        - message
+        - reason
+        - category
+      properties:
+        message:
+          type: string
+        causes:
+          type: array
+          items:
+            type: string
+        reason:
+          $ref: "#/components/schemas/FailureReason"
+        category:
+          $ref: "#/components/schemas/FailureCategory"
+        system_actor:
+          oneOf:
+            - $ref: "#/components/schemas/SystemActorKind"
+            - type: "null"
+        signature:
+          oneOf:
+            - $ref: "#/components/schemas/FailureSignature"
+            - type: "null"
+        exec_output_tail:
+          oneOf:
+            - $ref: "#/components/schemas/ExecOutputTail"
+            - type: "null"
 
     RunManifest:
       description: Self-contained workflow run manifest.
@@ -6410,8 +6478,10 @@ components:
           type: integer
           format: uint64
           minimum: 0
-        failure_reason:
-          type: ["string", "null"]
+        failure:
+          oneOf:
+            - $ref: "#/components/schemas/RunFailure"
+            - type: "null"
         final_git_commit_sha:
           type: ["string", "null"]
         stages:
@@ -6933,7 +7003,7 @@ components:
         - model_id
       properties:
         provider:
-          $ref: "#/components/schemas/Provider"
+          $ref: "#/components/schemas/ProviderId"
         model_id:
           type: string
         speed:
@@ -7777,7 +7847,7 @@ components:
         model:
           description: Latest usage-bearing visit model for this node; null when no visit used an LLM model.
           oneOf:
-            - $ref: "#/components/schemas/ModelReference"
+            - $ref: "#/components/schemas/BillingModelRef"
             - type: "null"
         billing:
           $ref: "#/components/schemas/BilledTokenCounts"
@@ -7851,7 +7921,7 @@ components:
         - billing
       properties:
         model:
-          $ref: "#/components/schemas/ModelReference"
+          $ref: "#/components/schemas/BillingModelRef"
         stages:
           type: integer
           description: Number of usage-bearing stage visits that used this model.
@@ -8654,6 +8724,9 @@ components:
         - prepare
         - execution
         - checkpoint
+        - clone
+        - run_branch
+        - meta_branch
         - sandbox
         - notifications
         - interviews
@@ -8688,6 +8761,12 @@ components:
           $ref: "#/components/schemas/RunExecutionSettings"
         checkpoint:
           $ref: "#/components/schemas/RunCheckpointSettings"
+        clone:
+          $ref: "#/components/schemas/RunCloneSettings"
+        run_branch:
+          $ref: "#/components/schemas/RunBranchSettings"
+        meta_branch:
+          $ref: "#/components/schemas/RunMetaBranchSettings"
         sandbox:
           $ref: "#/components/schemas/RunSandboxSettings"
         notifications:
@@ -8826,6 +8905,31 @@ components:
           items:
             type: string
 
+    RunCloneSettings:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+
+    RunBranchSettings:
+      type: object
+      required: [enabled, push]
+      properties:
+        enabled:
+          type: boolean
+        push:
+          type: boolean
+
+    RunMetaBranchSettings:
+      type: object
+      required: [enabled, push]
+      properties:
+        enabled:
+          type: boolean
+        push:
+          type: boolean
+
     RunSandboxSettings:
       type: object
       required: [provider, preserve, stop_on_terminal, devcontainer, env, docker, daytona]
@@ -8853,7 +8957,7 @@ components:
 
     DockerSettings:
       type: object
-      required: [image, network_mode, memory_limit, cpu_quota, env_vars, skip_clone]
+      required: [image, network_mode, memory_limit, cpu_quota, env_vars]
       properties:
         image:
           type: string
@@ -8869,12 +8973,10 @@ components:
           type: object
           additionalProperties:
             $ref: "#/components/schemas/InterpString"
-        skip_clone:
-          type: boolean
 
     DaytonaSettings:
       type: object
-      required: [auto_stop_interval, labels, snapshot, network, skip_clone]
+      required: [auto_stop_interval, labels, snapshot, network]
       properties:
         auto_stop_interval:
           type: ["integer", "null"]
@@ -8889,8 +8991,6 @@ components:
           oneOf:
             - $ref: "#/components/schemas/DaytonaNetworkLayer"
             - type: "null"
-        skip_clone:
-          type: boolean
 
     DaytonaSnapshotSettings:
       type: object

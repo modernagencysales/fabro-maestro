@@ -1,0 +1,825 @@
+//! `[llm]` settings layer.
+//!
+//! Holds the trusted, mergeable LLM provider/model catalog data:
+//!
+//! ```toml
+//! [llm.providers.kimi]
+//! display_name = "Kimi"
+//! adapter = "openai_compatible"
+//! base_url = "https://api.moonshot.ai/v1"
+//! credentials = ["credential:kimi", "env:KIMI_API_KEY"]
+//! priority = 60
+//! enabled = true
+//! aliases = ["moonshot"]
+//!
+//! [llm.models."kimi-k2.5"]
+//! provider = "kimi"
+//! ...
+//! ```
+//!
+//! Per-provider and per-model entries field-merge across layers (default →
+//! user → server → project → workflow/run). Inner arrays such as
+//! `credentials`, `aliases`, `controls.reasoning_effort`, and
+//! `controls.speed` replace as whole arrays.
+//!
+//! Adapter keys (`adapter = "..."`) are parsed as plain strings here.
+//! Resolution against the static adapter registry happens in `fabro-model`
+//! when the resolved [`Catalog`](fabro_model::Catalog) is built.
+
+use std::collections::{BTreeMap, HashMap};
+
+use fabro_model::catalog::deserialize_knowledge_cutoff;
+pub use fabro_model::{
+    CredentialRef, CredentialRefParseError, HeaderValueRef, ReasoningEffortFeature,
+};
+use serde::{Deserialize, Serialize};
+
+use super::maps::MergeMap;
+
+/// Top-level `[llm]` settings layer.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, fabro_macros::Combine)]
+#[serde(deny_unknown_fields)]
+pub struct LlmLayer {
+    /// Provider definitions keyed by provider ID.
+    #[serde(default, skip_serializing_if = "MergeMap::is_empty")]
+    pub providers: MergeMap<ProviderSettings>,
+    /// Model definitions keyed by canonical model ID.
+    #[serde(default, skip_serializing_if = "MergeMap::is_empty")]
+    pub models:    MergeMap<ModelSettings>,
+}
+
+/// One entry in `[llm.providers.<id>]`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, fabro_macros::Combine)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name:  Option<String>,
+    /// Adapter registry key (e.g. `"openai_compatible"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter:       Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url:      Option<String>,
+    /// Ordered list of credential references — first successful wins. Each
+    /// entry must be a typed `CredentialRef` (`credential:<id>` or
+    /// `env:<NAME>`); literal secret strings fail deserialization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credentials:   Option<Vec<CredentialRef>>,
+    /// Extra HTTP headers attached to every outgoing provider request after
+    /// credential resolution. Header values are typed so secret-bearing values
+    /// stay as references until a later resolution phase.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_headers: Option<HashMap<String, HeaderValueRef>>,
+    /// Higher wins; missing → `0`; ties broken by canonical provider ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority:      Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled:       Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aliases:       Option<Vec<String>>,
+}
+
+/// One entry in `[llm.models.<id>]`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, fabro_macros::Combine)]
+#[serde(deny_unknown_fields)]
+pub struct ModelSettings {
+    /// Provider ID this model belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider:             Option<String>,
+    /// Identifier sent to the provider API. Defaults to the catalog model ID
+    /// when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_id:               Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name:         Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family:               Option<String>,
+    /// Training data cutoff label. Built-ins keep the exact public string
+    /// already exposed by the model API.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub training:             Option<String>,
+    /// Public knowledge cutoff label. Built-ins keep values such as
+    /// `"May 2025"` exactly; bare TOML dates are normalized to `YYYY-MM-DD`.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_knowledge_cutoff",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub knowledge_cutoff:     Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default:              Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled:              Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aliases:              Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimated_output_tps: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits:               Option<ModelLimits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub features:             Option<ModelFeatures>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controls:             Option<ModelControls>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub costs:                Option<ModelCostTable>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, fabro_macros::Combine)]
+#[serde(deny_unknown_fields)]
+pub struct ModelLimits {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output:     Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, fabro_macros::Combine)]
+#[serde(deny_unknown_fields)]
+pub struct ModelFeatures {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools:            Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vision:           Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning:        Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffortFeature>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache:     Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort:           Option<bool>,
+}
+
+/// User-facing allow-list for native control values Fabro accepts on this
+/// model. Whole-array replacement on merge.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, fabro_macros::Combine)]
+#[serde(deny_unknown_fields)]
+pub struct ModelControls {
+    /// Allowed reasoning-effort values. Strings (e.g. `"low"`, `"high"`,
+    /// `"xhigh"`) — validated as `ReasoningEffort` at catalog build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<Vec<String>>,
+    /// Additional speeds beyond `Speed::Standard`. Strings — validated as
+    /// `Speed` at catalog build. `Speed::Standard` is implicit and must not
+    /// appear here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed:            Option<Vec<String>>,
+}
+
+/// Pricing table. Base [`CostRates`] always apply; per-speed overrides
+/// substitute when the request specifies a non-standard speed.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, fabro_macros::Combine)]
+#[serde(deny_unknown_fields)]
+pub struct ModelCostTable {
+    #[serde(flatten)]
+    pub base:  CostRates,
+    /// Per-speed cost overrides (e.g. `costs.speed.fast = { ... }`). Keys
+    /// must reference a speed declared in `controls.speed`. `standard` is
+    /// not a valid override key — base rates serve standard speed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<BTreeMap<String, CostRates>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, fabro_macros::Combine)]
+#[serde(deny_unknown_fields)]
+pub struct CostRates {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_cost_per_mtok:       Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_cost_per_mtok:      Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_input_cost_per_mtok: Option<f64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+    use crate::layers::Combine;
+
+    // ---- CredentialRef ----------------------------------------------------
+
+    #[test]
+    fn credential_ref_parses_credential_form() {
+        let r = CredentialRef::from_str("credential:openai_codex").unwrap();
+        assert_eq!(r, CredentialRef::Credential("openai_codex".to_string()));
+    }
+
+    #[test]
+    fn credential_ref_parses_env_form() {
+        let r = CredentialRef::from_str("env:KIMI_API_KEY").unwrap();
+        assert_eq!(r, CredentialRef::Env("KIMI_API_KEY".to_string()));
+    }
+
+    #[test]
+    fn credential_ref_rejects_literal_secret() {
+        // A literal API key contains no `credential:` or `env:` prefix.
+        let err = CredentialRef::from_str("sk-ant-1234").unwrap_err();
+        assert!(err.to_string().contains("must be"));
+        assert!(
+            !err.to_string().contains("sk-ant-1234"),
+            "error must not echo the literal secret string back to the user",
+        );
+    }
+
+    #[test]
+    fn credential_ref_rejects_empty_credential_id() {
+        let err = CredentialRef::from_str("credential:").unwrap_err();
+        assert!(err.to_string().contains("missing"));
+    }
+
+    #[test]
+    fn credential_ref_rejects_empty_env_name() {
+        let err = CredentialRef::from_str("env:").unwrap_err();
+        assert!(err.to_string().contains("missing"));
+    }
+
+    #[test]
+    fn credential_ref_round_trips_through_string() {
+        let r = CredentialRef::Credential("kimi".to_string());
+        assert_eq!(r.to_string(), "credential:kimi");
+        let back: CredentialRef = r.to_string().parse().unwrap();
+        assert_eq!(back, r);
+    }
+
+    #[test]
+    fn credential_ref_serializes_as_string_in_toml() {
+        let r = CredentialRef::Env("KIMI_API_KEY".to_string());
+        let s = toml::Value::try_from(&r).unwrap();
+        assert_eq!(s.as_str(), Some("env:KIMI_API_KEY"));
+    }
+
+    #[test]
+    fn credential_ref_deserializes_from_toml_string() {
+        let parsed: CredentialRef = toml::from_str(r#"v = "credential:foo""#)
+            .map(|v: toml::Value| {
+                v.as_table()
+                    .unwrap()
+                    .get("v")
+                    .unwrap()
+                    .clone()
+                    .try_into()
+                    .unwrap()
+            })
+            .unwrap();
+        assert_eq!(parsed, CredentialRef::Credential("foo".to_string()));
+    }
+
+    #[test]
+    fn credential_ref_in_array_rejects_literal_secret() {
+        // serde rejects literal secrets when parsed inside an array of
+        // CredentialRef. The error bubbles up as a TOML deserialization
+        // failure.
+        #[derive(Deserialize)]
+        #[expect(
+            dead_code,
+            reason = "field exists only to drive the deserializer; we assert on the parse error"
+        )]
+        struct Wrap {
+            v: Vec<CredentialRef>,
+        }
+        let err: Result<Wrap, _> = toml::from_str(r#"v = ["sk-literal-secret"]"#);
+        assert!(err.is_err(), "literal secret strings must fail to parse");
+    }
+
+    // ---- HeaderValueRef --------------------------------------------------
+
+    #[test]
+    fn header_value_ref_parses_literal_form() {
+        let parsed: HeaderValueRef = toml::from_str(r#"value = { literal = "@bedrock-prod" }"#)
+            .map(|v: toml::Value| {
+                v.as_table()
+                    .unwrap()
+                    .get("value")
+                    .unwrap()
+                    .clone()
+                    .try_into()
+                    .unwrap()
+            })
+            .unwrap();
+
+        assert_eq!(parsed, HeaderValueRef::Literal("@bedrock-prod".to_string()));
+        assert_eq!(parsed.to_string(), "literal:<redacted>");
+    }
+
+    #[test]
+    fn header_value_ref_parses_env_form() {
+        let parsed: HeaderValueRef = toml::from_str(r#"value = { env = "PORTKEY_API_KEY" }"#)
+            .map(|v: toml::Value| {
+                v.as_table()
+                    .unwrap()
+                    .get("value")
+                    .unwrap()
+                    .clone()
+                    .try_into()
+                    .unwrap()
+            })
+            .unwrap();
+
+        assert_eq!(parsed, HeaderValueRef::Env("PORTKEY_API_KEY".to_string()));
+        assert_eq!(parsed.to_string(), "env:PORTKEY_API_KEY");
+    }
+
+    #[test]
+    fn header_value_ref_parses_credential_form() {
+        let parsed: HeaderValueRef = toml::from_str(r#"value = { credential = "portkey_config" }"#)
+            .map(|v: toml::Value| {
+                v.as_table()
+                    .unwrap()
+                    .get("value")
+                    .unwrap()
+                    .clone()
+                    .try_into()
+                    .unwrap()
+            })
+            .unwrap();
+
+        assert_eq!(
+            parsed,
+            HeaderValueRef::Credential("portkey_config".to_string())
+        );
+        assert_eq!(parsed.to_string(), "credential:portkey_config");
+    }
+
+    #[test]
+    fn header_value_ref_rejects_bare_string() {
+        #[derive(Debug, Deserialize)]
+        struct Wrap {
+            #[expect(
+                dead_code,
+                reason = "field exists only to drive the deserializer; we assert on the parse error"
+            )]
+            value: HeaderValueRef,
+        }
+
+        let err = toml::from_str::<Wrap>(r#"value = "sk-portkey-literal""#).unwrap_err();
+        let message = err.message();
+
+        assert!(message.contains("header value"));
+        assert!(
+            !message.contains("sk-portkey-literal"),
+            "deserializer message must not echo a possible literal secret",
+        );
+    }
+
+    #[test]
+    fn header_value_ref_rejects_ambiguous_table() {
+        #[derive(Debug, Deserialize)]
+        struct Wrap {
+            #[expect(
+                dead_code,
+                reason = "field exists only to drive the deserializer; we assert on the parse error"
+            )]
+            value: HeaderValueRef,
+        }
+
+        let err = toml::from_str::<Wrap>(
+            r#"value = { env = "PORTKEY_API_KEY", literal = "@bedrock-prod" }"#,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("exactly one"));
+    }
+
+    #[test]
+    fn header_value_ref_rejects_unknown_keys() {
+        #[derive(Deserialize)]
+        #[expect(
+            dead_code,
+            reason = "field exists only to drive the deserializer; we assert on the parse error"
+        )]
+        struct Wrap {
+            value: HeaderValueRef,
+        }
+
+        let err: Result<Wrap, _> = toml::from_str(r#"value = { secret = "PORTKEY_API_KEY" }"#);
+
+        assert!(err.is_err(), "unknown header value keys must fail");
+    }
+
+    #[test]
+    fn header_value_ref_rejects_empty_values() {
+        #[derive(Debug, Deserialize)]
+        struct Wrap {
+            #[expect(
+                dead_code,
+                reason = "field exists only to drive the deserializer; we assert on the parse error"
+            )]
+            value: HeaderValueRef,
+        }
+
+        for source in [
+            r#"value = { literal = "" }"#,
+            r#"value = { env = "" }"#,
+            r#"value = { credential = "" }"#,
+        ] {
+            let err = toml::from_str::<Wrap>(source).unwrap_err();
+            assert!(err.to_string().contains("must not be empty"));
+        }
+    }
+
+    // ---- LlmLayer parsing -------------------------------------------------
+
+    #[test]
+    fn parses_minimal_provider_entry() {
+        let toml = r#"
+[providers.kimi]
+display_name = "Kimi"
+adapter = "openai_compatible"
+base_url = "https://api.moonshot.ai/v1"
+credentials = ["credential:kimi", "env:KIMI_API_KEY"]
+priority = 60
+enabled = true
+aliases = ["moonshot"]
+"#;
+        let layer: LlmLayer = toml::from_str(toml).unwrap();
+        let kimi = layer.providers.get("kimi").unwrap();
+        assert_eq!(kimi.display_name.as_deref(), Some("Kimi"));
+        assert_eq!(kimi.adapter.as_deref(), Some("openai_compatible"));
+        assert_eq!(kimi.base_url.as_deref(), Some("https://api.moonshot.ai/v1"));
+        assert_eq!(kimi.priority, Some(60));
+        assert_eq!(kimi.enabled, Some(true));
+        assert_eq!(kimi.aliases.as_deref(), Some(&["moonshot".to_string()][..]));
+        assert_eq!(kimi.credentials.as_ref().unwrap(), &vec![
+            CredentialRef::Credential("kimi".to_string()),
+            CredentialRef::Env("KIMI_API_KEY".to_string()),
+        ]);
+    }
+
+    #[test]
+    fn parses_provider_extra_headers() {
+        let toml = r#"
+[providers.portkey]
+display_name = "Portkey Bedrock"
+adapter = "anthropic"
+base_url = "https://api.portkey.ai/v1"
+
+[providers.portkey.extra_headers]
+x-portkey-api-key = { env = "PORTKEY_API_KEY" }
+x-portkey-provider = { literal = "@bedrock-prod" }
+x-portkey-config = { credential = "portkey_config" }
+"#;
+
+        let layer: LlmLayer = toml::from_str(toml).unwrap();
+        let portkey = layer.providers.get("portkey").unwrap();
+
+        assert!(portkey.credentials.is_none());
+        let headers = portkey.extra_headers.as_ref().unwrap();
+        assert_eq!(
+            headers.get("x-portkey-api-key"),
+            Some(&HeaderValueRef::Env("PORTKEY_API_KEY".to_string())),
+        );
+        assert_eq!(
+            headers.get("x-portkey-provider"),
+            Some(&HeaderValueRef::Literal("@bedrock-prod".to_string())),
+        );
+        assert_eq!(
+            headers.get("x-portkey-config"),
+            Some(&HeaderValueRef::Credential("portkey_config".to_string())),
+        );
+    }
+
+    #[test]
+    fn provider_extra_headers_reject_bare_string_values() {
+        let toml = r#"
+[providers.portkey.extra_headers]
+x-portkey-api-key = "sk-portkey-literal"
+"#;
+
+        let err = toml::from_str::<LlmLayer>(toml).unwrap_err();
+        let message = err.message();
+
+        assert!(message.contains("header value"));
+        assert!(
+            !message.contains("sk-portkey-literal"),
+            "deserializer message must not echo a possible literal secret",
+        );
+    }
+
+    #[test]
+    fn parses_full_model_entry() {
+        let toml = r#"
+[models."kimi-k2.5"]
+provider = "kimi"
+api_id = "kimi-k2.5"
+display_name = "Kimi K2.5"
+family = "kimi"
+training = "2025-01-01"
+knowledge_cutoff = 2025-01-01
+default = true
+enabled = true
+aliases = ["kimi"]
+estimated_output_tps = 50
+
+[models."kimi-k2.5".limits]
+context_window = 262144
+max_output = 32768
+
+[models."kimi-k2.5".features]
+tools = true
+vision = false
+reasoning = true
+effort = false
+
+[models."kimi-k2.5".costs]
+input_cost_per_mtok = 0.60
+output_cost_per_mtok = 2.50
+cache_input_cost_per_mtok = 0.15
+"#;
+        let layer: LlmLayer = toml::from_str(toml).unwrap();
+        let m = layer.models.get("kimi-k2.5").unwrap();
+        assert_eq!(m.provider.as_deref(), Some("kimi"));
+        assert_eq!(m.api_id.as_deref(), Some("kimi-k2.5"));
+        assert_eq!(m.display_name.as_deref(), Some("Kimi K2.5"));
+        assert_eq!(m.family.as_deref(), Some("kimi"));
+        assert_eq!(m.training.as_deref(), Some("2025-01-01"));
+        assert_eq!(m.knowledge_cutoff.as_deref(), Some("2025-01-01"));
+        assert_eq!(m.default, Some(true));
+        assert_eq!(m.enabled, Some(true));
+        assert_eq!(m.aliases.as_deref(), Some(&["kimi".to_string()][..]));
+        assert_eq!(m.estimated_output_tps, Some(50.0));
+
+        let limits = m.limits.as_ref().unwrap();
+        assert_eq!(limits.context_window, Some(262_144));
+        assert_eq!(limits.max_output, Some(32_768));
+
+        let features = m.features.as_ref().unwrap();
+        assert_eq!(features.tools, Some(true));
+        assert_eq!(features.vision, Some(false));
+        assert_eq!(features.reasoning, Some(true));
+        assert_eq!(features.effort, Some(false));
+
+        let costs = m.costs.as_ref().unwrap();
+        assert_eq!(costs.base.input_cost_per_mtok, Some(0.60));
+        assert_eq!(costs.base.output_cost_per_mtok, Some(2.50));
+        assert_eq!(costs.base.cache_input_cost_per_mtok, Some(0.15));
+        assert!(costs.speed.is_none());
+    }
+
+    #[test]
+    fn parses_model_reasoning_effort_and_prompt_cache_features() {
+        let toml = r#"
+[models."claude-bedrock"]
+provider = "bedrock"
+
+[models."claude-bedrock".features]
+tools = true
+vision = true
+reasoning = true
+reasoning_effort = "levels"
+prompt_cache = false
+"#;
+        let layer: LlmLayer = toml::from_str(toml).unwrap();
+        let features = layer
+            .models
+            .get("claude-bedrock")
+            .unwrap()
+            .features
+            .as_ref()
+            .unwrap();
+
+        assert_eq!(
+            features.reasoning_effort,
+            Some(fabro_model::ReasoningEffortFeature::Levels)
+        );
+        assert_eq!(features.prompt_cache, Some(false));
+    }
+
+    #[test]
+    fn parses_knowledge_cutoff_display_label() {
+        let toml = r#"
+[models."claude-opus-4-7"]
+provider = "anthropic"
+knowledge_cutoff = "May 2025"
+"#;
+        let layer: LlmLayer = toml::from_str(toml).unwrap();
+        let m = layer.models.get("claude-opus-4-7").unwrap();
+
+        assert_eq!(m.knowledge_cutoff.as_deref(), Some("May 2025"));
+    }
+
+    #[test]
+    fn parses_controls_and_per_speed_costs() {
+        let toml = r#"
+[models."claude-opus-4-6".controls]
+reasoning_effort = ["low", "medium", "high"]
+speed = ["fast"]
+
+[models."claude-opus-4-6".costs.speed.fast]
+input_cost_per_mtok = 90.0
+output_cost_per_mtok = 450.0
+cache_input_cost_per_mtok = 9.0
+"#;
+        let layer: LlmLayer = toml::from_str(toml).unwrap();
+        let m = layer.models.get("claude-opus-4-6").unwrap();
+
+        let controls = m.controls.as_ref().unwrap();
+        assert_eq!(
+            controls.reasoning_effort.as_deref(),
+            Some(&["low".to_string(), "medium".to_string(), "high".to_string()][..])
+        );
+        assert_eq!(controls.speed.as_deref(), Some(&["fast".to_string()][..]));
+
+        let costs = m.costs.as_ref().unwrap();
+        let fast = costs.speed.as_ref().unwrap().get("fast").unwrap();
+        assert_eq!(fast.input_cost_per_mtok, Some(90.0));
+        assert_eq!(fast.output_cost_per_mtok, Some(450.0));
+        assert_eq!(fast.cache_input_cost_per_mtok, Some(9.0));
+    }
+
+    #[test]
+    fn rejects_unknown_provider_field() {
+        let toml = r#"
+[providers.kimi]
+adapter = "openai_compatible"
+unknown_field = true
+"#;
+        let err = toml::from_str::<LlmLayer>(toml).unwrap_err();
+        assert!(err.to_string().contains("unknown_field"));
+    }
+
+    #[test]
+    fn rejects_unknown_model_field() {
+        let toml = r#"
+[models.foo]
+provider = "x"
+mystery = 1
+"#;
+        let err = toml::from_str::<LlmLayer>(toml).unwrap_err();
+        assert!(err.to_string().contains("mystery"));
+    }
+
+    // ---- Combine / merge --------------------------------------------------
+
+    #[test]
+    fn provider_field_merge_keeps_self_values_and_fills_holes() {
+        let high = ProviderSettings {
+            adapter: Some("openai_compatible".to_string()),
+            base_url: Some("https://override.example".to_string()),
+            ..ProviderSettings::default()
+        };
+        let low = ProviderSettings {
+            adapter: Some("anthropic".to_string()),
+            base_url: Some("https://defaults.example".to_string()),
+            display_name: Some("Default".to_string()),
+            priority: Some(10),
+            ..ProviderSettings::default()
+        };
+        let merged = high.combine(low);
+        assert_eq!(merged.adapter.as_deref(), Some("openai_compatible"));
+        assert_eq!(merged.base_url.as_deref(), Some("https://override.example"));
+        assert_eq!(merged.display_name.as_deref(), Some("Default"));
+        assert_eq!(merged.priority, Some(10));
+    }
+
+    #[test]
+    fn provider_credentials_array_replaces_wholesale() {
+        // Higher layer redeclares credentials → low layer's list is dropped
+        // entirely (whole-array replacement).
+        let high = ProviderSettings {
+            credentials: Some(vec![CredentialRef::Env("FOO".to_string())]),
+            ..ProviderSettings::default()
+        };
+        let low = ProviderSettings {
+            credentials: Some(vec![
+                CredentialRef::Credential("bar".to_string()),
+                CredentialRef::Env("BAZ".to_string()),
+            ]),
+            ..ProviderSettings::default()
+        };
+        let merged = high.combine(low);
+        assert_eq!(merged.credentials.unwrap(), vec![CredentialRef::Env(
+            "FOO".to_string()
+        )]);
+    }
+
+    #[test]
+    fn provider_credentials_inherits_when_unset_in_higher_layer() {
+        let high = ProviderSettings::default();
+        let low = ProviderSettings {
+            credentials: Some(vec![CredentialRef::Env("FOO".to_string())]),
+            ..ProviderSettings::default()
+        };
+        let merged = high.combine(low);
+        assert_eq!(merged.credentials.unwrap(), vec![CredentialRef::Env(
+            "FOO".to_string()
+        )]);
+    }
+
+    #[test]
+    fn provider_extra_headers_map_replaces_wholesale() {
+        let high = ProviderSettings {
+            extra_headers: Some(HashMap::from([(
+                "x-portkey-provider".to_string(),
+                HeaderValueRef::Literal("@bedrock-prod".to_string()),
+            )])),
+            ..ProviderSettings::default()
+        };
+        let low = ProviderSettings {
+            extra_headers: Some(HashMap::from([
+                (
+                    "x-portkey-api-key".to_string(),
+                    HeaderValueRef::Env("PORTKEY_API_KEY".to_string()),
+                ),
+                (
+                    "x-portkey-provider".to_string(),
+                    HeaderValueRef::Literal("@bedrock-default".to_string()),
+                ),
+            ])),
+            ..ProviderSettings::default()
+        };
+
+        let merged = high.combine(low);
+
+        let headers = merged.extra_headers.unwrap();
+        assert_eq!(headers.len(), 1);
+        assert_eq!(
+            headers.get("x-portkey-provider"),
+            Some(&HeaderValueRef::Literal("@bedrock-prod".to_string())),
+        );
+        assert!(!headers.contains_key("x-portkey-api-key"));
+    }
+
+    #[test]
+    fn provider_extra_headers_inherit_when_unset() {
+        let high = ProviderSettings::default();
+        let low = ProviderSettings {
+            extra_headers: Some(HashMap::from([(
+                "x-portkey-api-key".to_string(),
+                HeaderValueRef::Env("PORTKEY_API_KEY".to_string()),
+            )])),
+            ..ProviderSettings::default()
+        };
+
+        let merged = high.combine(low);
+
+        assert_eq!(
+            merged.extra_headers.unwrap().get("x-portkey-api-key"),
+            Some(&HeaderValueRef::Env("PORTKEY_API_KEY".to_string())),
+        );
+    }
+
+    #[test]
+    fn provider_extra_headers_empty_map_clears_lower_layer() {
+        let high = ProviderSettings {
+            extra_headers: Some(HashMap::new()),
+            ..ProviderSettings::default()
+        };
+        let low = ProviderSettings {
+            extra_headers: Some(HashMap::from([(
+                "x-portkey-api-key".to_string(),
+                HeaderValueRef::Env("PORTKEY_API_KEY".to_string()),
+            )])),
+            ..ProviderSettings::default()
+        };
+
+        let merged = high.combine(low);
+
+        assert!(merged.extra_headers.unwrap().is_empty());
+    }
+
+    #[test]
+    fn merge_map_field_merges_per_provider_id() {
+        let mut high_map: std::collections::HashMap<String, ProviderSettings> =
+            std::collections::HashMap::new();
+        high_map.insert("kimi".to_string(), ProviderSettings {
+            base_url: Some("https://override".to_string()),
+            ..ProviderSettings::default()
+        });
+        let high: MergeMap<ProviderSettings> = MergeMap::from(high_map);
+
+        let mut low_map: std::collections::HashMap<String, ProviderSettings> =
+            std::collections::HashMap::new();
+        low_map.insert("kimi".to_string(), ProviderSettings {
+            adapter: Some("openai_compatible".to_string()),
+            base_url: Some("https://defaults".to_string()),
+            ..ProviderSettings::default()
+        });
+        let low: MergeMap<ProviderSettings> = MergeMap::from(low_map);
+
+        let merged = high.combine(low);
+        let kimi = merged.get("kimi").unwrap();
+        assert_eq!(kimi.adapter.as_deref(), Some("openai_compatible"));
+        assert_eq!(kimi.base_url.as_deref(), Some("https://override"));
+    }
+
+    #[test]
+    fn model_controls_replace_wholesale() {
+        // Whole-array replacement: high layer's `reasoning_effort` shadows
+        // the low layer's list completely.
+        let high = ModelControls {
+            reasoning_effort: Some(vec!["high".to_string()]),
+            ..ModelControls::default()
+        };
+        let low = ModelControls {
+            reasoning_effort: Some(vec!["low".to_string(), "high".to_string()]),
+            speed:            Some(vec!["fast".to_string()]),
+        };
+        let merged = high.combine(low);
+        assert_eq!(
+            merged.reasoning_effort.as_deref(),
+            Some(&["high".to_string()][..])
+        );
+        assert_eq!(merged.speed.as_deref(), Some(&["fast".to_string()][..]));
+    }
+}

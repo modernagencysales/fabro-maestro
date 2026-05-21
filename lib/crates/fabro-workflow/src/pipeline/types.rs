@@ -6,10 +6,10 @@ use fabro_graphviz::graph::Graph;
 use fabro_interview::Interviewer;
 use fabro_llm::Provider;
 use fabro_mcp::config::McpServerSettings;
-use fabro_model::FallbackTarget;
+use fabro_model::{AgentProfileKind, Catalog, FallbackTarget, ProviderId};
 use fabro_sandbox::SandboxSpec;
 use fabro_types::RunId;
-use fabro_types::settings::run::PullRequestSettings;
+use fabro_types::settings::run::{PullRequestSettings, RunModelControls};
 use fabro_validate::{Diagnostic, Severity};
 use fabro_vault::Vault;
 use tokio::sync::RwLock as AsyncRwLock;
@@ -76,6 +76,14 @@ impl Validated {
 
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
+    }
+
+    /// Insert diagnostics at the front of the list. Used to surface
+    /// pre-structural-validation issues (e.g. template expansion warnings)
+    /// before the lint-rule output.
+    pub(crate) fn prepend_diagnostics(&mut self, mut diagnostics: Vec<Diagnostic>) {
+        diagnostics.append(&mut self.diagnostics);
+        self.diagnostics = diagnostics;
     }
 
     /// True if any diagnostic has Error severity.
@@ -212,8 +220,11 @@ impl Persisted {
 pub struct LlmSpec {
     pub model:          String,
     pub provider:       Provider,
+    pub provider_id:    ProviderId,
+    pub profile_kind:   AgentProfileKind,
     pub fallback_chain: Vec<FallbackTarget>,
     pub mcp_servers:    Vec<McpServerSettings>,
+    pub model_controls: RunModelControls,
     pub dry_run:        bool,
 }
 
@@ -240,6 +251,7 @@ pub struct InitOptions {
     pub llm:               LlmSpec,
     pub interviewer:       Arc<dyn Interviewer>,
     pub steering_hub:      Arc<SteeringHub>,
+    pub catalog:           Arc<Catalog>,
     pub lifecycle:         LifecycleOptions,
     pub run_options:       RunOptions,
     pub workflow_path:     Option<ManifestPath>,
@@ -309,6 +321,7 @@ pub struct TransformOptions {
     pub file_resolver:     Option<Arc<dyn FileResolver>>,
     pub inputs:            HashMap<String, toml::Value>,
     pub custom_transforms: Vec<Box<dyn Transform>>,
+    pub catalog:           Arc<fabro_model::Catalog>,
 }
 
 /// Options for the FINALIZE phase.

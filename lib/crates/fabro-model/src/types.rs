@@ -1,8 +1,30 @@
 use serde::{Deserialize, Serialize};
 
+use crate::ids::ProviderId;
 use crate::provider::Provider;
 
 // --- 2.9 Model ---
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+)]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
+pub enum ReasoningEffortFeature {
+    Levels,
+    #[default]
+    None,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelLimits {
@@ -12,16 +34,20 @@ pub struct ModelLimits {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelFeatures {
-    pub tools:     bool,
-    pub vision:    bool,
-    pub reasoning: bool,
-    /// Whether the model supports the `reasoning_effort` / `effort` parameter
-    /// directly (e.g. Anthropic `output_config.effort`, OpenAI
-    /// `reasoning.effort`). Models with `reasoning=true` but `effort=false`
-    /// (e.g. claude-sonnet-4-5) need the older `thinking` API with
-    /// `budget_tokens` instead.
+    pub tools:            bool,
+    pub vision:           bool,
+    pub reasoning:        bool,
+    /// Whether Fabro may expose abstract reasoning effort levels for this
+    /// model endpoint.
     #[serde(default)]
-    pub effort:    bool,
+    pub reasoning_effort: ReasoningEffortFeature,
+    /// Whether this model endpoint supports prompt caching annotations.
+    #[serde(default)]
+    pub prompt_cache:     bool,
+    /// Deprecated compatibility bool equivalent to
+    /// `reasoning_effort == "levels"`.
+    #[serde(default)]
+    pub effort:           bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -34,7 +60,7 @@ pub struct ModelCosts {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Model {
     pub id:                   String,
-    pub provider:             Provider,
+    pub provider:             ProviderId,
     pub family:               String,
     pub display_name:         String,
     pub limits:               ModelLimits,
@@ -58,8 +84,12 @@ impl Model {
         &self.id
     }
 
-    pub fn provider(&self) -> Provider {
-        self.provider
+    pub fn provider(&self) -> &ProviderId {
+        &self.provider
+    }
+
+    pub fn builtin_provider(&self) -> Option<Provider> {
+        Provider::from_id(&self.provider)
     }
 
     pub fn family(&self) -> &str {
@@ -90,8 +120,16 @@ impl Model {
         self.features.reasoning
     }
 
+    pub fn supports_reasoning_effort(&self) -> bool {
+        self.features.reasoning_effort == ReasoningEffortFeature::Levels
+    }
+
     pub fn supports_effort(&self) -> bool {
-        self.features.effort
+        self.supports_reasoning_effort()
+    }
+
+    pub fn supports_prompt_cache(&self) -> bool {
+        self.features.prompt_cache
     }
 
     pub fn training(&self) -> Option<&str> {
@@ -136,7 +174,7 @@ mod tests {
     fn inherent_methods_return_correct_values() {
         let info = Catalog::builtin().get("claude-opus-4-7").unwrap();
         assert_eq!(info.id(), "claude-opus-4-7");
-        assert_eq!(info.provider(), Provider::Anthropic);
+        assert_eq!(info.provider(), &Provider::Anthropic.id());
         assert_eq!(info.family(), "claude-4");
         assert_eq!(info.display_name(), "Claude Opus 4.7");
         assert_eq!(info.context_window(), 1_000_000);
@@ -158,8 +196,7 @@ mod tests {
     #[test]
     fn all_catalog_providers_are_valid() {
         for model in Catalog::builtin().list(None) {
-            // provider() just returns the Provider enum, no parsing needed
-            let _ = model.provider();
+            assert!(model.builtin_provider().is_some());
         }
     }
 }

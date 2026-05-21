@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use fabro_model::Provider;
+use fabro_model::{Catalog, ProviderId};
 use fabro_vault::Vault;
 use tokio::sync::RwLock as AsyncRwLock;
 
@@ -41,19 +41,30 @@ impl std::fmt::Debug for VaultCredentialSource {
 
 #[async_trait]
 impl CredentialSource for VaultCredentialSource {
-    async fn resolve(&self) -> anyhow::Result<ResolvedCredentials> {
+    async fn resolve(&self, catalog: &Catalog) -> anyhow::Result<ResolvedCredentials> {
         let mut credentials = Vec::new();
         let mut auth_issues = Vec::new();
 
-        for provider in Provider::ALL {
+        for provider in catalog.providers() {
             match self
                 .resolver
-                .resolve(*provider, CredentialUsage::ApiRequest)
+                .resolve(provider.id.clone(), CredentialUsage::ApiRequest, catalog)
                 .await
             {
                 Ok(ResolvedCredential::Api(credential)) => credentials.push(credential),
-                Ok(ResolvedCredential::Cli(_)) | Err(ResolveError::NotConfigured(_)) => {}
-                Err(err) => auth_issues.push((*provider, err)),
+                Ok(ResolvedCredential::Cli(_)) => {}
+                Err(ResolveError::NotConfigured(_)) => {
+                    match self
+                        .resolver
+                        .header_only_api_credential(provider, catalog)
+                        .await
+                    {
+                        Ok(Some(credential)) => credentials.push(credential),
+                        Ok(None) => {}
+                        Err(err) => auth_issues.push((provider.id.clone(), err)),
+                    }
+                }
+                Err(err) => auth_issues.push((provider.id.clone(), err)),
             }
         }
 
@@ -63,9 +74,9 @@ impl CredentialSource for VaultCredentialSource {
         })
     }
 
-    async fn configured_providers(&self) -> Vec<Provider> {
+    async fn configured_providers(&self, catalog: &Catalog) -> Vec<ProviderId> {
         let vault = self.vault.read().await;
-        self.resolver.configured_providers(&vault)
+        self.resolver.configured_providers(&vault, catalog)
     }
 }
 
@@ -74,7 +85,8 @@ mod tests {
     use std::sync::Arc;
 
     use chrono::{Duration, Utc};
-    use fabro_model::Provider;
+    use fabro_model::catalog::LlmCatalogSettings;
+    use fabro_model::{Catalog, Provider};
     use fabro_vault::{SecretType, Vault};
     use tokio::sync::RwLock as AsyncRwLock;
 
@@ -84,8 +96,8 @@ mod tests {
 
     fn api_key_credential(provider: Provider, key: &str) -> AuthCredential {
         AuthCredential {
-            provider,
-            details: AuthDetails::ApiKey {
+            provider: provider.id(),
+            details:  AuthDetails::ApiKey {
                 key: key.to_string(),
             },
         }
@@ -93,7 +105,7 @@ mod tests {
 
     fn expired_openai_credential() -> AuthCredential {
         AuthCredential {
-            provider: Provider::OpenAi,
+            provider: Provider::OpenAi.id(),
             details:  AuthDetails::CodexOAuth {
                 tokens:     OAuthTokens {
                     access_token:  "expired-access".to_string(),
@@ -111,6 +123,10 @@ mod tests {
                 account_id: Some("acct_123".to_string()),
             },
         }
+    }
+
+    fn default_catalog() -> Catalog {
+        Catalog::from_builtin_with_overrides(&LlmCatalogSettings::default()).unwrap()
     }
 
     #[tokio::test]
@@ -137,18 +153,19 @@ mod tests {
 
         let source =
             VaultCredentialSource::with_env_lookup(Arc::new(AsyncRwLock::new(vault)), |_| None);
+        let catalog = default_catalog();
 
-        let resolved = source.resolve().await.unwrap();
+        let resolved = source.resolve(&catalog).await.unwrap();
 
         assert_eq!(resolved.credentials.len(), 1);
-        assert_eq!(resolved.credentials[0].provider, Provider::Anthropic);
+        assert_eq!(resolved.credentials[0].provider, Provider::Anthropic.id());
         assert_eq!(resolved.auth_issues.len(), 1);
         assert!(matches!(
-            resolved.auth_issues[0].1,
+            &resolved.auth_issues[0].1,
             ResolveError::RefreshFailed {
-                provider: Provider::OpenAi,
+                provider,
                 ..
-            }
+            } if provider == &Provider::OpenAi.id()
         ));
     }
 
@@ -176,10 +193,11 @@ mod tests {
             .unwrap();
         let source =
             VaultCredentialSource::with_env_lookup(Arc::new(AsyncRwLock::new(vault)), |_| None);
+        let catalog = default_catalog();
 
-        assert_eq!(source.configured_providers().await, vec![
-            Provider::Anthropic,
-            Provider::OpenAi
+        assert_eq!(source.configured_providers(&catalog).await, vec![
+            Provider::Anthropic.id(),
+            Provider::OpenAi.id()
         ]);
     }
 }

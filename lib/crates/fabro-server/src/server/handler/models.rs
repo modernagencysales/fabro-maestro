@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::super::{
     ApiError, AppState, FromStr, HashSet, IntoResponse, Json, MAX_PAGE_OFFSET, ModelTestMode, Path,
-    Provider, Query, RequiredUser, Response, Router, State, StatusCode, auth_issue_message,
+    ProviderId, Query, RequiredUser, Response, Router, State, StatusCode, auth_issue_message,
     default_page_limit, error, get, post, run_model_test,
 };
 
@@ -35,32 +35,21 @@ async fn list_models(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ModelListParams>,
 ) -> Response {
-    let provider = match params.provider.as_deref() {
-        Some(value) => match Provider::from_str(value) {
-            Ok(provider) => Some(provider),
-            Err(_) => {
-                return ApiError::new(
-                    StatusCode::BAD_REQUEST,
-                    format!("unknown provider: {value}"),
-                )
-                .into_response();
-            }
-        },
-        None => None,
-    };
+    let provider_id = params.provider.as_deref().map(ProviderId::from);
 
     let query = params.query.as_ref().map(|value| value.to_lowercase());
     let limit = params.limit.clamp(1, 100) as usize;
     let offset = params.offset.min(MAX_PAGE_OFFSET) as usize;
-    let configured: HashSet<Provider> = state
+    let catalog = state.catalog();
+    let configured: HashSet<ProviderId> = state
         .llm_source
-        .configured_providers()
+        .configured_providers(catalog.as_ref())
         .await
         .into_iter()
         .collect();
 
-    let mut models = fabro_model::Catalog::builtin()
-        .list(provider)
+    let mut models = catalog
+        .list(provider_id.as_ref())
         .into_iter()
         .filter(|model| match &query {
             Some(query) => {
@@ -112,7 +101,8 @@ async fn test_model(
         },
         None => ModelTestMode::Basic,
     };
-    let Some(info) = fabro_model::Catalog::builtin().get(&id) else {
+    let catalog = state.catalog();
+    let Some(info) = catalog.get(&id) else {
         return ApiError::not_found(format!("Model not found: {id}")).into_response();
     };
 
@@ -130,12 +120,12 @@ async fn test_model(
     if let Some((_, issue)) = llm_result
         .auth_issues
         .iter()
-        .find(|(provider, _)| *provider == info.provider)
+        .find(|(provider, _)| provider == &info.provider)
     {
-        return ApiError::bad_request(auth_issue_message(info.provider, issue)).into_response();
+        return ApiError::bad_request(auth_issue_message(&info.provider, issue)).into_response();
     }
-    let provider_name = <&'static str>::from(info.provider);
-    if !llm_result.client.provider_names().contains(&provider_name) {
+    let provider_name = info.provider.as_str();
+    if !llm_result.client.has_provider(provider_name) {
         return Json(serde_json::json!({
             "model_id": info.id,
             "status": "skip",

@@ -14,7 +14,10 @@ mod generated {
     include!(concat!(env!("OUT_DIR"), "/codegen.rs"));
 }
 pub mod types {
-    pub use fabro_model::{Model, ModelCosts, ModelFeatures, ModelLimits, ModelTestMode, Provider};
+    pub use fabro_model::{
+        Model, ModelCosts, ModelFeatures, ModelLimits, ModelRef as BillingModelRef, ModelTestMode,
+        Provider, ReasoningEffortFeature, Speed as BillingSpeed,
+    };
     pub use fabro_types::settings::server::{
         GithubIntegrationSettings, GithubIntegrationStrategy, IntegrationWebhooksSettings,
         IpAllowEntry, LogDestination, ObjectStoreSettings, ServerApiSettings,
@@ -29,15 +32,15 @@ pub mod types {
         BlockedReason, FailureReason, RunControlAction, RunStatus, SuccessReason,
     };
     pub use fabro_types::{
-        AuthMethod, BilledTokenCounts, CommandTermination, DiffStats, DiffSummary, DirtyStatus,
-        EventEnvelope, GitContext, IdpIdentity, InterviewOption, InterviewQuestionRecord,
-        PendingInterviewRecord, PreRunPushOutcome, Principal, PullRequest, PullRequestDetails,
-        QuestionType, RepositoryRef, Run, RunClientProvenance, RunEvent, RunProjection,
-        RunProvenance, RunSandbox, RunSandboxRuntime, RunServerProvenance, SandboxDetails,
-        SandboxProvider, SandboxResources, SandboxService, SandboxServiceListResponse,
-        SandboxState, SandboxTimestamps, SecretMetadata, SecretType, ServerSettings,
-        StageCompletion, StageHandler, StageOutcome, StageProjection, StageState, SystemActorKind,
-        UserPrincipal, WorkflowSettings,
+        AuthMethod, BilledTokenCounts, CommandTermination, Conclusion, DiffStats, DiffSummary,
+        DirtyStatus, EventEnvelope, ExecOutputTail, FailureCategory, FailureSignature, GitContext,
+        IdpIdentity, InterviewOption, InterviewQuestionRecord, PendingInterviewRecord,
+        PreRunPushOutcome, Principal, PullRequest, PullRequestDetails, QuestionType, RepositoryRef,
+        Run, RunClientProvenance, RunEvent, RunFailure, RunProjection, RunProvenance, RunSandbox,
+        RunSandboxRuntime, RunServerProvenance, SandboxDetails, SandboxProvider, SandboxResources,
+        SandboxService, SandboxServiceListResponse, SandboxState, SandboxTimestamps,
+        SecretMetadata, SecretType, ServerSettings, StageCompletion, StageHandler, StageOutcome,
+        StageProjection, StageState, SystemActorKind, UserPrincipal, WorkflowSettings,
     };
 
     pub use crate::generated::types::*;

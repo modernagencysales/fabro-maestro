@@ -1,6 +1,7 @@
 mod cli;
 mod combine;
 mod features;
+mod llm;
 mod log_filter;
 mod maps;
 mod project;
@@ -16,6 +17,11 @@ pub use cli::{
 };
 pub(crate) use combine::Combine;
 pub use features::FeaturesLayer;
+pub use llm::{
+    CostRates, CredentialRef, CredentialRefParseError, HeaderValueRef, LlmLayer, ModelControls,
+    ModelCostTable, ModelFeatures as LlmModelFeatures, ModelLimits as LlmModelLimits,
+    ModelSettings, ProviderSettings, ReasoningEffortFeature,
+};
 pub use log_filter::LogFilter;
 pub use maps::{MergeMap, ReplaceMap, StickyMap};
 pub use project::ProjectLayer;
@@ -24,8 +30,9 @@ pub use run::{
     GitAuthorLayer, HookAgentMarker, HookEntry, HookTlsMode, InterviewProviderLayer,
     InterviewsLayer, McpEntryLayer, ModelRefOrSplice, NotificationProviderLayer,
     NotificationRouteLayer, PrepareStep, RunAgentLayer, RunArtifactsLayer, RunCheckpointLayer,
-    RunExecutionLayer, RunGitLayer, RunGoalLayer, RunIntegrationsGithubLayer, RunIntegrationsLayer,
-    RunLayer, RunModelLayer, RunPrepareLayer, RunPullRequestLayer, RunSandboxLayer, RunScmLayer,
+    RunCloneLayer, RunExecutionLayer, RunGitLayer, RunGoalLayer, RunIntegrationsGithubLayer,
+    RunIntegrationsLayer, RunLayer, RunMetaBranchLayer, RunModelControlsLayer, RunModelLayer,
+    RunPrepareLayer, RunPullRequestLayer, RunRunBranchLayer, RunSandboxLayer, RunScmLayer,
     ScmGitHubLayer, StringOrSplice,
 };
 pub use server::{

@@ -17,7 +17,8 @@ use fabro_auth::EnvCredentialSource;
 use fabro_llm::client::Client;
 use fabro_llm::provider::{Provider, ProviderAdapter};
 use fabro_llm::providers::OpenAiAdapter;
-use fabro_model::ModelHandle;
+use fabro_model::catalog::LlmCatalogSettings;
+use fabro_model::{Catalog, ModelHandle};
 use fabro_test::{TwinScenario, TwinScenarios, TwinToolCall, twin_openai};
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -35,15 +36,15 @@ fn summarizer_model_id(provider: Provider) -> ModelHandle {
         | Provider::Minimax
         | Provider::Inception
         | Provider::OpenAiCompatible => ModelHandle::ByName {
-            provider: Provider::OpenAi,
+            provider: Provider::OpenAi.id(),
             model:    "gpt-5.4-mini".to_string(),
         },
         Provider::Gemini => ModelHandle::ByName {
-            provider: Provider::Gemini,
+            provider: Provider::Gemini.id(),
             model:    "gemini-3-flash-preview".to_string(),
         },
         Provider::Anthropic => ModelHandle::ByName {
-            provider: Provider::Anthropic,
+            provider: Provider::Anthropic.id(),
             model:    "claude-haiku-4-5".to_string(),
         },
     }
@@ -150,7 +151,11 @@ async fn make_client(provider: Provider, twin: Option<&OpenAiTwinOptions>) -> Cl
     }
 
     let source = EnvCredentialSource::new();
-    Client::from_source(&source)
+    let catalog = Arc::new(
+        Catalog::from_builtin_with_overrides(&LlmCatalogSettings::default())
+            .expect("default catalog should build"),
+    );
+    Client::from_source(&source, catalog)
         .await
         .expect("Client::from_source failed")
 }
