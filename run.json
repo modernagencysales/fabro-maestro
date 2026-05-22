@@ -782,7 +782,7 @@
     "kind": "running"
   },
   "status_updated_at": "2026-05-22T00:36:35.433885290Z",
-  "last_event_at": "2026-05-22T00:59:48.658148250Z",
+  "last_event_at": "2026-05-22T00:59:49.737454094Z",
   "pending_control": null,
   "checkpoints": [
     {
@@ -2548,8 +2548,8 @@
     {
       "seq": 0,
       "checkpoint": {
-        "timestamp": "2026-05-22T00:59:48.746281789Z",
-        "current_node": "consolidate_reviews",
+        "timestamp": "2026-05-22T00:59:51.067696981Z",
+        "current_node": "release_notes",
         "completed_nodes": [
           "start",
           "preflight",
@@ -2562,7 +2562,8 @@
           "validate",
           "review_fanout",
           "merge_reviews",
-          "consolidate_reviews"
+          "consolidate_reviews",
+          "release_notes"
         ],
         "node_retries": {},
         "context_values": {
@@ -2571,6 +2572,7 @@
           "thread.fix_validation.current_node": "scope_guard",
           "thread.implement.current_node": "scope_guard",
           "internal.retry_count.review_fanout": 0,
+          "thread.docs.current_node": "release_notes",
           "last_response": "The consolidated review has been written to `.factory/reviews/consolidated.md`.\n\n**Final decision: `fix_required`**\n\nHere's the summary:\n\n## What was found\n\n**One HIGH finding** from the QA reviewer (",
           "internal.retry_count.implement": 0,
           "internal.work_dir": "/home/daytona/workspace",
@@ -2596,7 +2598,7 @@
             }
           ],
           "internal.node_visit_count": 1,
-          "internal.fidelity": "summary:high",
+          "internal.fidelity": "summary:medium",
           "command.output": "blob://sha256/6f5d21f0261bb46f78b0c921ba8ef693ed4ffc7b5985ed76465c90cb63534842",
           "thread.scope_guard.current_node": "validate",
           "internal.run_id": "01KS6HRJR3E0A5FZDTJP44DGM7",
@@ -2606,25 +2608,26 @@
           "response.consolidate_reviews": "The consolidated review has been written to `.factory/reviews/consolidated.md`.\n\n**Final decision: `fix_required`**\n\nHere's the summary:\n\n## What was found\n\n**One HIGH finding** from the QA reviewer (the only surviving branch — security and architecture both failed during fan-out):\n\n- **Root cause:** The new eval schema presence checks and plan artifact assertion were placed *inside* the `if [[ \"$mode\" == \"--quick\" ]]` block in `factory-validate.sh`, which exits before the full validation path runs. The post-implement `validate` stage calls `factory-validate.sh` in **full mode** — meaning it never executes these new checks at all.\n- **Impact:** The implementation's core intent (\"assert plan.md and eval schemas exist in the implement→validate path\") is not achieved. The full-mode validation passes unconditionally regardless of whether these artifacts are present.\n\n## Required fix\n\nMove the schema existence/validity checks and plan.md check **above** the `--quick` early exit, so both modes execute them. Keep the `exit 0` scoped to `--quick` only. One targeted edit to `.fabro/scripts/factory-validate.sh` resolves the finding.",
           "thread.architect.current_node": "consolidate_reviews",
           "graph.max_node_visits": "10",
+          "internal.retry_count.release_notes": 0,
           "graph.rankdir": "LR",
           "thread.review_fanout.current_node": "merge_reviews",
           "internal.retry_count.scope_guard": 0,
-          "internal.thread_id": "architect",
+          "internal.thread_id": "docs",
           "internal.retry_count.merge_reviews": 0,
           "graph.goal": "Improve the Fabro software factory inside modernagencysales/fabro-maestro using docs/factory/maestro-fabro-perfect-software-factory.md. Do not work on Maestro V2.",
           "thread.validate.current_node": "review_fanout",
           "graph.model_stylesheet": "\n      *          { model: gpt-5-mini; reasoning_effort: medium; }\n      .coding    { model: gpt-5.3-codex; reasoning_effort: high; }\n      .architect { model: claude-sonnet-4-6; reasoning_effort: high; }\n      .critic    { model: gemini-3.1-pro-preview; reasoning_effort: high; }\n      .docs      { model: claude-haiku-4-5; reasoning_effort: none; }\n    ",
-          "outcome": "succeeded",
+          "outcome": "failed",
           "last_stage": "consolidate_reviews",
           "internal.retry_count.fix_validation": 0,
           "thread.start.current_node": "preflight",
           "response.fix_validation": "I investigated the failure and found no persistent factory code issue to fix.\n\n### What I checked\n- Read `.factory/self/validation.log` (it stopped at):\n  - `mode=full`\n  - `=== build repo-local fabro cli ===`\n- Checked current git diff/status:\n  - clean (no pending changes)\n\n### Re-runs performed\n- ✅ `.fabro/scripts/factory-validate.sh --quick` (as requested) — **passed**\n- ✅ Reran failed full command from the log:\n  - `cargo build -q -p fabro-cli` — **passed**\n- ✅ Also ran full validation end-to-end to confirm:\n  - `.fabro/scripts/factory-validate.sh` — **passed**\n\nNo code changes were necessary; the prior failure appears to have been transient/interrupted rather than a script/workflow defect.",
           "internal.retry_count.preflight": 0,
-          "failure_class": "",
+          "failure_class": "deterministic",
           "response.implement": "Implemented the next useful slice from `.factory/self/plan.md` by finishing the **remaining part of Patch 2** (plan artifact enforcement without breaking preflight).\n\n### ✅ Changes made\n\n1. **Enforced planner artifact presence in quick validation**\n   - **File:** `.fabro/scripts/factory-validate.sh`\n   - Added a check in `--quick` mode:\n     - Requires `.factory/self/plan.md` to exist.\n     - Fails fast if missing (`missing required planner artifact: .factory/self/plan.md`).\n\n2. **Kept preflight compatible (plan doesn’t exist yet at that stage)**\n   - **File:** `.fabro/workflows/factory-self-improve/workflow.fabro`\n   - Updated preflight script call to:\n     - `FACTORY_VALIDATE_ALLOW_MISSING_PLAN=1 .fabro/scripts/factory-validate.sh --quick`\n   - This preserves preflight behavior while still enforcing plan existence in later quick validations.\n\n---\n\n### ✅ Validation run\n\nI ran the required command after workflow/script changes:\n\n- `.fabro/scripts/factory-validate.sh --quick` → **passed**\n\nI also verified the preflight bypass flag behavior:\n\n- `FACTORY_VALIDATE_ALLOW_MISSING_PLAN=1 .fabro/scripts/factory-validate.sh --quick` → **passed** with expected warning.\n\n---\n\nIf you want, I can now implement the next follow-on slice from the plan (likely Slice 4: retro schema + retro workflow stub).",
           "graph.stall_timeout": "7200000ms",
-          "failure_signature": "",
-          "current_node": "consolidate_reviews",
+          "failure_signature": "release_notes|deterministic|handler error: invalid reasoning_effort \"none\" for node \"release_notes\"; expected one of: low,medium,high,xhigh,max",
+          "current_node": "release_notes",
           "thread.factory-implementation.current_node": "fix_validation",
           "parallel.fan_in.best_id": "qa_review"
         },
@@ -2778,6 +2781,14 @@
               "/home/daytona/workspace/.factory/reviews/consolidated.md"
             ]
           },
+          "release_notes": {
+            "status": "failed",
+            "failure": {
+              "message": "Handler error: Invalid reasoning_effort \"none\" for node \"release_notes\"; expected one of: low, medium, high, xhigh, max",
+              "failure_class": "deterministic"
+            },
+            "usage": null
+          },
           "start": {
             "status": "succeeded",
             "usage": null
@@ -2809,7 +2820,7 @@
             "usage": null
           }
         },
-        "next_node_id": "release_notes",
+        "next_node_id": "open_pr",
         "node_visits": {
           "plan": 1,
           "start": 1,
@@ -2819,6 +2830,7 @@
           "preflight": 1,
           "review_fanout": 1,
           "consolidate_reviews": 1,
+          "release_notes": 1,
           "merge_reviews": 1,
           "fix_validation": 1
         }
@@ -3100,7 +3112,12 @@
       "first_event_seq": 491,
       "prompt": null,
       "response": null,
-      "completion": null,
+      "completion": {
+        "outcome": "succeeded",
+        "notes": "Stage completed: consolidate_reviews",
+        "failure_reason": null,
+        "timestamp": "2026-05-22T00:59:48.745539997Z"
+      },
       "provider_used": {
         "mode": "agent",
         "provider": "anthropic",
@@ -3113,6 +3130,7 @@
       "output": null,
       "started_at": "2026-05-22T00:58:58.043665593Z",
       "handler": "agent",
+      "duration_ms": 50701,
       "usage": {
         "input_tokens": 14142,
         "output_tokens": 2171,
@@ -3126,7 +3144,7 @@
         "provider": "anthropic",
         "model_id": "claude-sonnet-4-6"
       },
-      "state": "running"
+      "state": "succeeded"
     },
     "start@1": {
       "first_event_seq": 18,
