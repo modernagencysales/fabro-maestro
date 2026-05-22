@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export PATH="$HOME/.cargo/bin:$PATH"
 
 mode="${1:-full}"
 mkdir -p .factory/self

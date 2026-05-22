@@ -33,4 +33,4 @@ auto_merge = false
 merge_strategy = "squash"
 
 [[run.prepare.steps]]
-script = ".fabro/scripts/bootstrap-factory-sandbox.sh"
+script = "set -euo pipefail; git status --short --branch; cargo --version; mkdir -p .factory/self .factory/reviews .factory/release"
