@@ -1,0 +1,6 @@
+{
+  "outcome": "failed",
+  "notes": null,
+  "failure_reason": "Handler error: Script timed out after 600000ms: .fabro/scripts/factory-validate.sh\n\n## output\nrepo=https://REDACTED@github.com/modernagencysales/fabro-maestro\nmode=full\n=== build repo-local fabro cli ===\n",
+  "timestamp": "2026-05-22T00:52:35.014923478Z"
+}
