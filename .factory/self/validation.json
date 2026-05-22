@@ -1,5 +1,5 @@
 {
   "decision": "pass",
-  "mode": "--quick",
-  "note": "Quick filesystem preflight passed."
+  "mode": "full",
+  "note": "Full factory validation passed."
 }
