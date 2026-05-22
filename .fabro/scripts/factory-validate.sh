@@ -57,6 +57,12 @@ if [[ "$mode" == "--quick" || "$mode" == "quick" ]]; then
     || fail "missing factory-self-improve workflow"
   test -f .fabro/workflows/factory-self-improve/workflow.toml \
     || fail "missing factory-self-improve run config"
+  if [[ "${FACTORY_VALIDATE_ALLOW_MISSING_PLAN:-0}" != "1" ]]; then
+    test -f .factory/self/plan.md \
+      || fail "missing required planner artifact: .factory/self/plan.md"
+  else
+    echo "WARN: skipping plan artifact check (FACTORY_VALIDATE_ALLOW_MISSING_PLAN=1)" | tee -a "$log"
+  fi
   while IFS= read -r -d '' script; do
     test -x "$script" || fail "script is not executable: $script"
   done < <(find .fabro/scripts -maxdepth 1 -name '*.sh' -print0 | sort -z)
