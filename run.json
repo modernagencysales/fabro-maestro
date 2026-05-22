@@ -782,7 +782,7 @@
     "kind": "running"
   },
   "status_updated_at": "2026-05-22T00:36:35.433885290Z",
-  "last_event_at": "2026-05-22T00:58:53.383973643Z",
+  "last_event_at": "2026-05-22T00:58:55.797811545Z",
   "pending_control": null,
   "checkpoints": [
     {
@@ -2066,9 +2066,9 @@
       }
     },
     {
-      "seq": 0,
+      "seq": 480,
       "checkpoint": {
-        "timestamp": "2026-05-22T00:58:53.438288731Z",
+        "timestamp": "2026-05-22T00:58:55.795723949Z",
         "current_node": "review_fanout",
         "completed_nodes": [
           "start",
@@ -2081,6 +2081,239 @@
           "scope_guard",
           "validate",
           "review_fanout"
+        ],
+        "node_retries": {},
+        "context_values": {
+          "internal.retry_count.validate": 0,
+          "command.output": "blob://sha256/6f5d21f0261bb46f78b0c921ba8ef693ed4ffc7b5985ed76465c90cb63534842",
+          "thread.factory-implementation.current_node": "fix_validation",
+          "thread.start.current_node": "preflight",
+          "internal.thread_id": "validate",
+          "internal.fidelity": "summary:high",
+          "graph.model_stylesheet": "\n      *          { model: gpt-5-mini; reasoning_effort: medium; }\n      .coding    { model: gpt-5.3-codex; reasoning_effort: high; }\n      .architect { model: claude-sonnet-4-6; reasoning_effort: high; }\n      .critic    { model: gemini-3.1-pro-preview; reasoning_effort: high; }\n      .docs      { model: claude-haiku-4-5; reasoning_effort: none; }\n    ",
+          "graph.goal": "Improve the Fabro software factory inside modernagencysales/fabro-maestro using docs/factory/maestro-fabro-perfect-software-factory.md. Do not work on Maestro V2.",
+          "failure_class": "",
+          "internal.retry_count.review_fanout": 0,
+          "response.implement": "Implemented the next useful slice from `.factory/self/plan.md` by finishing the **remaining part of Patch 2** (plan artifact enforcement without breaking preflight).\n\n### ✅ Changes made\n\n1. **Enforced planner artifact presence in quick validation**\n   - **File:** `.fabro/scripts/factory-validate.sh`\n   - Added a check in `--quick` mode:\n     - Requires `.factory/self/plan.md` to exist.\n     - Fails fast if missing (`missing required planner artifact: .factory/self/plan.md`).\n\n2. **Kept preflight compatible (plan doesn’t exist yet at that stage)**\n   - **File:** `.fabro/workflows/factory-self-improve/workflow.fabro`\n   - Updated preflight script call to:\n     - `FACTORY_VALIDATE_ALLOW_MISSING_PLAN=1 .fabro/scripts/factory-validate.sh --quick`\n   - This preserves preflight behavior while still enforcing plan existence in later quick validations.\n\n---\n\n### ✅ Validation run\n\nI ran the required command after workflow/script changes:\n\n- `.fabro/scripts/factory-validate.sh --quick` → **passed**\n\nI also verified the preflight bypass flag behavior:\n\n- `FACTORY_VALIDATE_ALLOW_MISSING_PLAN=1 .fabro/scripts/factory-validate.sh --quick` → **passed** with expected warning.\n\n---\n\nIf you want, I can now implement the next follow-on slice from the plan (likely Slice 4: retro schema + retro workflow stub).",
+          "response.plan": "All three patches applied and validated. Here is the full plan summary:\n\n---\n\n## Plan Summary\n\n### Current Factory Gaps (8 identified)\n\n| # | Gap | Severity |\n|---|-----|----------|\n| 1 | Missing `spec-eval.schema.json` and `release-readiness.schema.json` | HIGH |\n| 2 | `factory-validate.sh --quick` doesn't check eval schemas exist/are valid JSON | HIGH |\n| 3 | Planner prompt has no explicit output contract (goal gate fires on any output) | MEDIUM |\n| 4 | No `factory-retro.schema.json` or `maestro-retro.fabro` workflow | MEDIUM |\n| 5 | `workflow.toml` has hardcoded local `/Users/ajmal/...` path | LOW |\n| 6 | Scope guard doesn't verify reviewer output files were actually written | MEDIUM |\n| 7 | Missing migration/performance/observability reviewer prompts (3 of 6) | LOW |\n| 8 | No `detect-risk-surfaces.sh` script (used by risk classifier + scope guard) | LOW |\n\n---\n\n### Three Patches Implemented\n\n**Patch 1 — Added two missing eval schemas**  \nCreated `.fabro/evals/schemas/spec-eval.schema.json` and `.fabro/evals/schemas/release-readiness.schema.json` from the design spec's §12.2 and §12.8 contracts. These define machine-checkable output contracts for the spec evaluator (8 scoring dimensions, overall_score ≥ 4.0 to pass) and the release readiness stage (blockers, rollback plan, manual QA steps). Factory now has 6 complete eval schemas.\n\n**Patch 2 — Wired schema presence+validity into `factory-validate.sh --quick`**  \nAdded an \"eval schema checks\" block to the quick preflight path. It asserts all 6 required schemas exist and are valid JSON (using Python's `json.load`). Any missing or malformed schema now causes a hard preflight failure, so silent schema drift is caught before the implement stage begins.\n\n**Patch 3 — Strengthened planner prompt + removed hardcoded local path**  \nThe planner prompt now specifies four required sections (`## Current Factory Gaps`, `## First Three Patches`, `## Validation Commands`, `## Risks and Guardrails`) with explicit content rules. The `goal_gate=true` on the plan node now has structural meaning. Separately, the hardcoded `working_dir = \"/Users/ajmal/Maestro/fabro-maestro\"` was removed from `workflow.toml` — it was a developer-local artefact that was ignored by Daytona but confusing to read.\n\n**Validation:** `.fabro/scripts/factory-validate.sh --quick` passes with all 6 schemas confirmed valid.",
+          "last_stage": "fix_validation",
+          "internal.retry_count.plan": 0,
+          "internal.retry_count.scope_guard": 0,
+          "internal.retry_count.start": 0,
+          "thread.validate.current_node": "review_fanout",
+          "internal.retry_count.implement": 0,
+          "outcome": "partially_succeeded",
+          "internal.run_id": "01KS6HRJR3E0A5FZDTJP44DGM7",
+          "response.fix_validation": "I investigated the failure and found no persistent factory code issue to fix.\n\n### What I checked\n- Read `.factory/self/validation.log` (it stopped at):\n  - `mode=full`\n  - `=== build repo-local fabro cli ===`\n- Checked current git diff/status:\n  - clean (no pending changes)\n\n### Re-runs performed\n- ✅ `.fabro/scripts/factory-validate.sh --quick` (as requested) — **passed**\n- ✅ Reran failed full command from the log:\n  - `cargo build -q -p fabro-cli` — **passed**\n- ✅ Also ran full validation end-to-end to confirm:\n  - `.fabro/scripts/factory-validate.sh` — **passed**\n\nNo code changes were necessary; the prior failure appears to have been transient/interrupted rather than a script/workflow defect.",
+          "thread.implement.current_node": "scope_guard",
+          "failure_signature": "",
+          "parallel.branch_count": 3,
+          "graph.stall_timeout": "7200000ms",
+          "internal.retry_count.fix_validation": 0,
+          "graph.default_fidelity": "summary:high",
+          "thread.fix_validation.current_node": "scope_guard",
+          "thread.scope_guard.current_node": "validate",
+          "internal.node_visit_count": 1,
+          "current_node": "review_fanout",
+          "parallel.results": [
+            {
+              "id": "qa_review",
+              "status": "succeeded",
+              "head_sha": "6cbb029533dfb1aa525bc3c489750e760884d1e0"
+            },
+            {
+              "id": "security_review",
+              "status": "failed",
+              "head_sha": "ad2afe6df30abf5bb4af055254f845ad62e47449"
+            },
+            {
+              "id": "architecture_review",
+              "status": "failed",
+              "head_sha": "51c28cb33818d3bfd9a5c1ac1eb81c182e0548f1"
+            }
+          ],
+          "graph.rankdir": "LR",
+          "graph.max_node_visits": "10",
+          "internal.retry_count.preflight": 0,
+          "internal.work_dir": "/home/daytona/workspace",
+          "last_response": "I investigated the failure and found no persistent factory code issue to fix.\n\n### What I checked\n- Read `.factory/self/validation.log` (it stopped at):\n  - `mode=full`\n  - `=== build repo-local fabro",
+          "thread.architect.current_node": "plan"
+        },
+        "node_outcomes": {
+          "implement": {
+            "status": "succeeded",
+            "context_updates": {
+              "last_response": "Implemented the next useful slice from `.factory/self/plan.md` by finishing the **remaining part of Patch 2** (plan artifact enforcement without breaking preflight).\n\n### ✅ Changes made\n\n1. **Enforc",
+              "response.implement": "Implemented the next useful slice from `.factory/self/plan.md` by finishing the **remaining part of Patch 2** (plan artifact enforcement without breaking preflight).\n\n### ✅ Changes made\n\n1. **Enforced planner artifact presence in quick validation**\n   - **File:** `.fabro/scripts/factory-validate.sh`\n   - Added a check in `--quick` mode:\n     - Requires `.factory/self/plan.md` to exist.\n     - Fails fast if missing (`missing required planner artifact: .factory/self/plan.md`).\n\n2. **Kept preflight compatible (plan doesn’t exist yet at that stage)**\n   - **File:** `.fabro/workflows/factory-self-improve/workflow.fabro`\n   - Updated preflight script call to:\n     - `FACTORY_VALIDATE_ALLOW_MISSING_PLAN=1 .fabro/scripts/factory-validate.sh --quick`\n   - This preserves preflight behavior while still enforcing plan existence in later quick validations.\n\n---\n\n### ✅ Validation run\n\nI ran the required command after workflow/script changes:\n\n- `.fabro/scripts/factory-validate.sh --quick` → **passed**\n\nI also verified the preflight bypass flag behavior:\n\n- `FACTORY_VALIDATE_ALLOW_MISSING_PLAN=1 .fabro/scripts/factory-validate.sh --quick` → **passed** with expected warning.\n\n---\n\nIf you want, I can now implement the next follow-on slice from the plan (likely Slice 4: retro schema + retro workflow stub).",
+              "last_stage": "implement"
+            },
+            "notes": "Stage completed: implement",
+            "usage": {
+              "input": {
+                "usage": {
+                  "model": {
+                    "provider": "openai",
+                    "model_id": "gpt-5.3-codex"
+                  },
+                  "tokens": {
+                    "input_tokens": 51036,
+                    "output_tokens": 3628,
+                    "reasoning_tokens": 4938,
+                    "cache_read_tokens": 938368,
+                    "cache_write_tokens": 0
+                  }
+                },
+                "facts": {
+                  "provider": "open_ai"
+                }
+              },
+              "total_usd_micros": 373451
+            }
+          },
+          "plan": {
+            "status": "succeeded",
+            "context_updates": {
+              "last_response": "All three patches applied and validated. Here is the full plan summary:\n\n---\n\n## Plan Summary\n\n### Current Factory Gaps (8 identified)\n\n| # | Gap | Severity |\n|---|-----|----------|\n| 1 | Missing `spe",
+              "last_stage": "plan",
+              "response.plan": "All three patches applied and validated. Here is the full plan summary:\n\n---\n\n## Plan Summary\n\n### Current Factory Gaps (8 identified)\n\n| # | Gap | Severity |\n|---|-----|----------|\n| 1 | Missing `spec-eval.schema.json` and `release-readiness.schema.json` | HIGH |\n| 2 | `factory-validate.sh --quick` doesn't check eval schemas exist/are valid JSON | HIGH |\n| 3 | Planner prompt has no explicit output contract (goal gate fires on any output) | MEDIUM |\n| 4 | No `factory-retro.schema.json` or `maestro-retro.fabro` workflow | MEDIUM |\n| 5 | `workflow.toml` has hardcoded local `/Users/ajmal/...` path | LOW |\n| 6 | Scope guard doesn't verify reviewer output files were actually written | MEDIUM |\n| 7 | Missing migration/performance/observability reviewer prompts (3 of 6) | LOW |\n| 8 | No `detect-risk-surfaces.sh` script (used by risk classifier + scope guard) | LOW |\n\n---\n\n### Three Patches Implemented\n\n**Patch 1 — Added two missing eval schemas**  \nCreated `.fabro/evals/schemas/spec-eval.schema.json` and `.fabro/evals/schemas/release-readiness.schema.json` from the design spec's §12.2 and §12.8 contracts. These define machine-checkable output contracts for the spec evaluator (8 scoring dimensions, overall_score ≥ 4.0 to pass) and the release readiness stage (blockers, rollback plan, manual QA steps). Factory now has 6 complete eval schemas.\n\n**Patch 2 — Wired schema presence+validity into `factory-validate.sh --quick`**  \nAdded an \"eval schema checks\" block to the quick preflight path. It asserts all 6 required schemas exist and are valid JSON (using Python's `json.load`). Any missing or malformed schema now causes a hard preflight failure, so silent schema drift is caught before the implement stage begins.\n\n**Patch 3 — Strengthened planner prompt + removed hardcoded local path**  \nThe planner prompt now specifies four required sections (`## Current Factory Gaps`, `## First Three Patches`, `## Validation Commands`, `## Risks and Guardrails`) with explicit content rules. The `goal_gate=true` on the plan node now has structural meaning. Separately, the hardcoded `working_dir = \"/Users/ajmal/Maestro/fabro-maestro\"` was removed from `workflow.toml` — it was a developer-local artefact that was ignored by Daytona but confusing to read.\n\n**Validation:** `.fabro/scripts/factory-validate.sh --quick` passes with all 6 schemas confirmed valid."
+            },
+            "notes": "Stage completed: plan",
+            "usage": {
+              "input": {
+                "usage": {
+                  "model": {
+                    "provider": "anthropic",
+                    "model_id": "claude-sonnet-4-6"
+                  },
+                  "tokens": {
+                    "input_tokens": 49389,
+                    "output_tokens": 10428,
+                    "reasoning_tokens": 0,
+                    "cache_read_tokens": 1054184,
+                    "cache_write_tokens": 57243
+                  }
+                },
+                "facts": {
+                  "provider": "anthropic",
+                  "cache_write_5m_tokens": 57243,
+                  "cache_write_1h_tokens": 0
+                }
+              },
+              "total_usd_micros": 835503
+            },
+            "files_touched": [
+              "/home/daytona/workspace/.fabro/evals/schemas/release-readiness.schema.json",
+              "/home/daytona/workspace/.fabro/evals/schemas/spec-eval.schema.json",
+              "/home/daytona/workspace/.fabro/prompts/factory/planner.md",
+              "/home/daytona/workspace/.fabro/scripts/factory-validate.sh",
+              "/home/daytona/workspace/.fabro/workflows/factory-self-improve/workflow.toml",
+              "/home/daytona/workspace/.factory/self/plan.md"
+            ]
+          },
+          "review_fanout": {
+            "status": "partially_succeeded",
+            "jump_to_node": "merge_reviews",
+            "notes": "Parallel node dispatched 3 branches (1 succeeded, 2 failed)",
+            "usage": null
+          },
+          "fix_validation": {
+            "status": "succeeded",
+            "context_updates": {
+              "response.fix_validation": "I investigated the failure and found no persistent factory code issue to fix.\n\n### What I checked\n- Read `.factory/self/validation.log` (it stopped at):\n  - `mode=full`\n  - `=== build repo-local fabro cli ===`\n- Checked current git diff/status:\n  - clean (no pending changes)\n\n### Re-runs performed\n- ✅ `.fabro/scripts/factory-validate.sh --quick` (as requested) — **passed**\n- ✅ Reran failed full command from the log:\n  - `cargo build -q -p fabro-cli` — **passed**\n- ✅ Also ran full validation end-to-end to confirm:\n  - `.fabro/scripts/factory-validate.sh` — **passed**\n\nNo code changes were necessary; the prior failure appears to have been transient/interrupted rather than a script/workflow defect.",
+              "last_stage": "fix_validation",
+              "last_response": "I investigated the failure and found no persistent factory code issue to fix.\n\n### What I checked\n- Read `.factory/self/validation.log` (it stopped at):\n  - `mode=full`\n  - `=== build repo-local fabro"
+            },
+            "notes": "Stage completed: fix_validation",
+            "usage": {
+              "input": {
+                "usage": {
+                  "model": {
+                    "provider": "openai",
+                    "model_id": "gpt-5.3-codex"
+                  },
+                  "tokens": {
+                    "input_tokens": 48747,
+                    "output_tokens": 679,
+                    "reasoning_tokens": 1083,
+                    "cache_read_tokens": 328320,
+                    "cache_write_tokens": 0
+                  }
+                },
+                "facts": {
+                  "provider": "open_ai"
+                }
+              },
+              "total_usd_micros": 167431
+            }
+          },
+          "scope_guard": {
+            "status": "succeeded",
+            "context_updates": {
+              "command.output": "blob://sha256/73029058b3f4143ed086dc1904911ef4fb19aa3ad44d645abdf4da930f83f0fa"
+            },
+            "notes": "Script completed: .fabro/scripts/factory-scope-guard.sh",
+            "usage": null
+          },
+          "validate": {
+            "status": "succeeded",
+            "context_updates": {
+              "command.output": "blob://sha256/6f5d21f0261bb46f78b0c921ba8ef693ed4ffc7b5985ed76465c90cb63534842"
+            },
+            "notes": "Script completed: .fabro/scripts/factory-validate.sh",
+            "usage": null
+          },
+          "start": {
+            "status": "succeeded",
+            "usage": null
+          },
+          "preflight": {
+            "status": "succeeded",
+            "context_updates": {
+              "command.output": "blob://sha256/fc545250e002ada76972c6da04cb97c2a520b209764b904aad815004a03213f2"
+            },
+            "notes": "Script completed: set -euo pipefail; remote=$(git remote get-url origin); origin_safe=$(printf '%s' \"$remote\" | sed -E 's#(https://x-access-token:)[^@]+@#\\1REDACTED@#; s#(https://)[^/@:]+:[^@]+@#\\1REDACTED@#'); echo \"origin=${origin_safe}\"; case \"$remote\" in *modernagencysales/fabro-maestro*|*fabro-sh/fabro*) ;; *) echo \"FAIL: expected fabro-maestro/fabro origin\"; exit 1;; esac; test -f docs/factory/maestro-fabro-perfect-software-factory.md; .fabro/scripts/factory-validate.sh --quick",
+            "usage": null
+          }
+        },
+        "next_node_id": "merge_reviews",
+        "git_commit_sha": "ca6f021da53de3c7c8995306284d06856c924bf3",
+        "node_visits": {
+          "fix_validation": 1,
+          "implement": 1,
+          "scope_guard": 2,
+          "review_fanout": 1,
+          "plan": 1,
+          "validate": 2,
+          "start": 1,
+          "preflight": 1
+        }
+      },
+      "diff": {
+        "patch": "diff --git a/.factory/reviews/qa.md b/.factory/reviews/qa.md\nnew file mode 100644\nindex 000000000..930079d0a\n--- /dev/null\n+++ b/.factory/reviews/qa.md\n@@ -0,0 +1,6 @@\n+# QA Review\n+\n+Decision: fix_required\n+\n+## Findings\n+- [HIGH] .fabro/scripts/factory-validate.sh:52 — Validation checks for `.factory/self/plan.md` and eval schemas only run in `--quick` mode, which then exits early. Because the `validate` workflow node executes `.fabro/scripts/factory-validate.sh` in `full` mode, it entirely skips these new checks. This effectively nullifies the implementation's goal of asserting artifact presence in the `implement -> validate` path. Move the preflight and schema checks outside the `if [[ \"$mode\" == \"--quick\" ... ]]` conditional block so they are executed in both `quick` and `full` validation modes, keeping the `exit 0` only for when `--quick` is specified.\n",
+        "summary": {
+          "files_changed": 11,
+          "additions": 439,
+          "deletions": 10
+        }
+      }
+    },
+    {
+      "seq": 0,
+      "checkpoint": {
+        "timestamp": "2026-05-22T00:58:55.821432424Z",
+        "current_node": "merge_reviews",
+        "completed_nodes": [
+          "start",
+          "preflight",
+          "plan",
+          "implement",
+          "scope_guard",
+          "validate",
+          "fix_validation",
+          "scope_guard",
+          "validate",
+          "review_fanout",
+          "merge_reviews"
         ],
         "node_retries": {},
         "context_values": {
@@ -2117,16 +2350,20 @@
           "command.output": "blob://sha256/6f5d21f0261bb46f78b0c921ba8ef693ed4ffc7b5985ed76465c90cb63534842",
           "thread.scope_guard.current_node": "validate",
           "internal.run_id": "01KS6HRJR3E0A5FZDTJP44DGM7",
+          "parallel.fan_in.best_outcome": "succeeded",
+          "parallel.fan_in.best_head_sha": "6cbb029533dfb1aa525bc3c489750e760884d1e0",
           "parallel.branch_count": 3,
           "thread.architect.current_node": "plan",
           "graph.max_node_visits": "10",
           "graph.rankdir": "LR",
+          "thread.review_fanout.current_node": "merge_reviews",
           "internal.retry_count.scope_guard": 0,
-          "internal.thread_id": "validate",
+          "internal.thread_id": "review_fanout",
+          "internal.retry_count.merge_reviews": 0,
           "graph.goal": "Improve the Fabro software factory inside modernagencysales/fabro-maestro using docs/factory/maestro-fabro-perfect-software-factory.md. Do not work on Maestro V2.",
           "thread.validate.current_node": "review_fanout",
           "graph.model_stylesheet": "\n      *          { model: gpt-5-mini; reasoning_effort: medium; }\n      .coding    { model: gpt-5.3-codex; reasoning_effort: high; }\n      .architect { model: claude-sonnet-4-6; reasoning_effort: high; }\n      .critic    { model: gemini-3.1-pro-preview; reasoning_effort: high; }\n      .docs      { model: claude-haiku-4-5; reasoning_effort: none; }\n    ",
-          "outcome": "partially_succeeded",
+          "outcome": "succeeded",
           "last_stage": "fix_validation",
           "internal.retry_count.fix_validation": 0,
           "thread.start.current_node": "preflight",
@@ -2136,8 +2373,9 @@
           "response.implement": "Implemented the next useful slice from `.factory/self/plan.md` by finishing the **remaining part of Patch 2** (plan artifact enforcement without breaking preflight).\n\n### ✅ Changes made\n\n1. **Enforced planner artifact presence in quick validation**\n   - **File:** `.fabro/scripts/factory-validate.sh`\n   - Added a check in `--quick` mode:\n     - Requires `.factory/self/plan.md` to exist.\n     - Fails fast if missing (`missing required planner artifact: .factory/self/plan.md`).\n\n2. **Kept preflight compatible (plan doesn’t exist yet at that stage)**\n   - **File:** `.fabro/workflows/factory-self-improve/workflow.fabro`\n   - Updated preflight script call to:\n     - `FACTORY_VALIDATE_ALLOW_MISSING_PLAN=1 .fabro/scripts/factory-validate.sh --quick`\n   - This preserves preflight behavior while still enforcing plan existence in later quick validations.\n\n---\n\n### ✅ Validation run\n\nI ran the required command after workflow/script changes:\n\n- `.fabro/scripts/factory-validate.sh --quick` → **passed**\n\nI also verified the preflight bypass flag behavior:\n\n- `FACTORY_VALIDATE_ALLOW_MISSING_PLAN=1 .fabro/scripts/factory-validate.sh --quick` → **passed** with expected warning.\n\n---\n\nIf you want, I can now implement the next follow-on slice from the plan (likely Slice 4: retro schema + retro workflow stub).",
           "graph.stall_timeout": "7200000ms",
           "failure_signature": "",
-          "current_node": "review_fanout",
-          "thread.factory-implementation.current_node": "fix_validation"
+          "current_node": "merge_reviews",
+          "thread.factory-implementation.current_node": "fix_validation",
+          "parallel.fan_in.best_id": "qa_review"
         },
         "node_outcomes": {
           "plan": {
@@ -2266,6 +2504,16 @@
             "notes": "Script completed: .fabro/scripts/factory-scope-guard.sh",
             "usage": null
           },
+          "merge_reviews": {
+            "status": "succeeded",
+            "context_updates": {
+              "parallel.fan_in.best_outcome": "succeeded",
+              "parallel.fan_in.best_head_sha": "6cbb029533dfb1aa525bc3c489750e760884d1e0",
+              "parallel.fan_in.best_id": "qa_review"
+            },
+            "notes": "Selected best candidate: qa_review",
+            "usage": null
+          },
           "preflight": {
             "status": "succeeded",
             "context_updates": {
@@ -2275,7 +2523,7 @@
             "usage": null
           }
         },
-        "next_node_id": "merge_reviews",
+        "next_node_id": "consolidate_reviews",
         "node_visits": {
           "plan": 1,
           "start": 1,
@@ -2284,6 +2532,7 @@
           "scope_guard": 2,
           "preflight": 1,
           "review_fanout": 1,
+          "merge_reviews": 1,
           "fix_validation": 1
         }
       },
@@ -2395,7 +2644,12 @@
       "first_event_seq": 390,
       "prompt": null,
       "response": null,
-      "completion": null,
+      "completion": {
+        "outcome": "partially_succeeded",
+        "notes": "Parallel node dispatched 3 branches (1 succeeded, 2 failed)",
+        "failure_reason": null,
+        "timestamp": "2026-05-22T00:58:53.438204217Z"
+      },
       "provider_used": {
         "mode": "agent",
         "provider": "gemini",
@@ -2404,10 +2658,27 @@
       "diff": null,
       "script_invocation": null,
       "script_timing": null,
-      "parallel_results": null,
+      "parallel_results": [
+        {
+          "id": "qa_review",
+          "status": "succeeded",
+          "head_sha": "6cbb029533dfb1aa525bc3c489750e760884d1e0"
+        },
+        {
+          "id": "security_review",
+          "status": "failed",
+          "head_sha": "ad2afe6df30abf5bb4af055254f845ad62e47449"
+        },
+        {
+          "id": "architecture_review",
+          "status": "failed",
+          "head_sha": "51c28cb33818d3bfd9a5c1ac1eb81c182e0548f1"
+        }
+      ],
       "output": null,
       "started_at": "2026-05-22T00:56:59.579789997Z",
       "handler": "parallel",
+      "duration_ms": 113858,
       "usage": {
         "input_tokens": 68015,
         "output_tokens": 1081,
@@ -2421,7 +2692,7 @@
         "provider": "gemini",
         "model_id": "gemini-3.1-pro-preview"
       },
-      "state": "running"
+      "state": "partially_succeeded"
     },
     "scope_guard@2": {
       "first_event_seq": 370,
@@ -2508,6 +2779,29 @@
         "cache_write_tokens": 0
       },
       "state": "succeeded"
+    },
+    "merge_reviews@1": {
+      "first_event_seq": 483,
+      "prompt": null,
+      "response": null,
+      "completion": null,
+      "provider_used": null,
+      "diff": null,
+      "script_invocation": null,
+      "script_timing": null,
+      "parallel_results": null,
+      "output": null,
+      "started_at": "2026-05-22T00:58:55.797811545Z",
+      "handler": "parallel.fan_in",
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "reasoning_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0
+      },
+      "state": "running"
     },
     "start@1": {
       "first_event_seq": 18,
