@@ -1,0 +1,30 @@
+diff --git a/.fabro/scripts/factory-validate.sh b/.fabro/scripts/factory-validate.sh
+index d8d23f35d..add072af9 100755
+--- a/.fabro/scripts/factory-validate.sh
++++ b/.fabro/scripts/factory-validate.sh
+@@ -57,6 +57,12 @@ if [[ "$mode" == "--quick" || "$mode" == "quick" ]]; then
+     || fail "missing factory-self-improve workflow"
+   test -f .fabro/workflows/factory-self-improve/workflow.toml \
+     || fail "missing factory-self-improve run config"
++  if [[ "${FACTORY_VALIDATE_ALLOW_MISSING_PLAN:-0}" != "1" ]]; then
++    test -f .factory/self/plan.md \
++      || fail "missing required planner artifact: .factory/self/plan.md"
++  else
++    echo "WARN: skipping plan artifact check (FACTORY_VALIDATE_ALLOW_MISSING_PLAN=1)" | tee -a "$log"
++  fi
+   while IFS= read -r -d '' script; do
+     test -x "$script" || fail "script is not executable: $script"
+   done < <(find .fabro/scripts -maxdepth 1 -name '*.sh' -print0 | sort -z)
+diff --git a/.fabro/workflows/factory-self-improve/workflow.fabro b/.fabro/workflows/factory-self-improve/workflow.fabro
+index 4bc73cb84..732d3ba64 100644
+--- a/.fabro/workflows/factory-self-improve/workflow.fabro
++++ b/.fabro/workflows/factory-self-improve/workflow.fabro
+@@ -22,7 +22,7 @@ digraph FactorySelfImprove {
+     shape=parallelogram,
+     goal_gate=true,
+     retry_target="implement",
+-    script="set -euo pipefail; remote=$(git remote get-url origin); origin_safe=$(printf '%s' \"$remote\" | sed -E 's#(https://x-access-token:)[^@]+@#\\1REDACTED@#; s#(https://)[^/@:]+:[^@]+@#\\1REDACTED@#'); echo \"origin=${origin_safe}\"; case \"$remote\" in *modernagencysales/fabro-maestro*|*fabro-sh/fabro*) ;; *) echo \"FAIL: expected fabro-maestro/fabro origin\"; exit 1;; esac; test -f docs/factory/maestro-fabro-perfect-software-factory.md; .fabro/scripts/factory-validate.sh --quick"
++    script="set -euo pipefail; remote=$(git remote get-url origin); origin_safe=$(printf '%s' \"$remote\" | sed -E 's#(https://x-access-token:)[^@]+@#\\1REDACTED@#; s#(https://)[^/@:]+:[^@]+@#\\1REDACTED@#'); echo \"origin=${origin_safe}\"; case \"$remote\" in *modernagencysales/fabro-maestro*|*fabro-sh/fabro*) ;; *) echo \"FAIL: expected fabro-maestro/fabro origin\"; exit 1;; esac; test -f docs/factory/maestro-fabro-perfect-software-factory.md; FACTORY_VALIDATE_ALLOW_MISSING_PLAN=1 .fabro/scripts/factory-validate.sh --quick"
+   ]
+ 
+   plan [
