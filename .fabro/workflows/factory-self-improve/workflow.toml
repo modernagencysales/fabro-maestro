@@ -33,4 +33,4 @@ auto_merge = false
 merge_strategy = "squash"
 
 [[run.prepare.steps]]
-script = "set -euo pipefail; git status --short --branch; cargo --version; mkdir -p .factory/self .factory/reviews .factory/release"
+script = "set -euo pipefail; git status --short --branch; fabro --version; mkdir -p .factory/self .factory/reviews .factory/release"

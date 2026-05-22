@@ -16,22 +16,8 @@ run() {
 echo "repo=$(git remote get-url origin 2>/dev/null || true)" | tee -a "$log"
 echo "mode=${mode}" | tee -a "$log"
 
-if command -v fabro >/dev/null 2>&1; then
-  FABRO_BIN="$(command -v fabro)"
-elif [[ -x target/debug/fabro ]]; then
-  FABRO_BIN="target/debug/fabro"
-elif command -v cargo >/dev/null 2>&1; then
-  run "build repo-local fabro cli" cargo build -q -p fabro-cli
-  FABRO_BIN="target/debug/fabro"
-else
-  echo "FAIL: neither fabro nor cargo is available" | tee -a "$log"
-  exit 1
-fi
-
-run "fabro version" "$FABRO_BIN" --version
-
 while IFS= read -r -d '' workflow; do
-  run "fabro validate ${workflow}" "$FABRO_BIN" validate "$workflow"
+  run "fabro validate ${workflow}" fabro validate "$workflow"
 done < <(find .fabro/workflows -name workflow.fabro -print0 | sort -z)
 
 if [[ "$mode" == "--quick" || "$mode" == "quick" ]]; then
