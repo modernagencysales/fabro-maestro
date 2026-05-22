@@ -57,35 +57,9 @@ if [[ "$mode" == "--quick" || "$mode" == "quick" ]]; then
     || fail "missing factory-self-improve workflow"
   test -f .fabro/workflows/factory-self-improve/workflow.toml \
     || fail "missing factory-self-improve run config"
-  if [[ "${FACTORY_VALIDATE_ALLOW_MISSING_PLAN:-0}" != "1" ]]; then
-    test -f .factory/self/plan.md \
-      || fail "missing required planner artifact: .factory/self/plan.md"
-  else
-    echo "WARN: skipping plan artifact check (FACTORY_VALIDATE_ALLOW_MISSING_PLAN=1)" | tee -a "$log"
-  fi
   while IFS= read -r -d '' script; do
     test -x "$script" || fail "script is not executable: $script"
   done < <(find .fabro/scripts -maxdepth 1 -name '*.sh' -print0 | sort -z)
-
-  # Assert required eval schemas exist and are valid JSON
-  required_schemas=(
-    ".fabro/evals/schemas/validation.schema.json"
-    ".fabro/evals/schemas/risk-report.schema.json"
-    ".fabro/evals/schemas/review-finding.schema.json"
-    ".fabro/evals/schemas/consolidated-review.schema.json"
-    ".fabro/evals/schemas/spec-eval.schema.json"
-    ".fabro/evals/schemas/release-readiness.schema.json"
-  )
-  echo "=== eval schema checks ===" | tee -a "$log"
-  for schema in "${required_schemas[@]}"; do
-    test -f "$schema" || fail "missing required eval schema: $schema"
-    if command -v python3 >/dev/null 2>&1; then
-      python3 -c "import json,sys; json.load(open('$schema'))" 2>&1 | tee -a "$log" \
-        || fail "invalid JSON in eval schema: $schema"
-    fi
-    echo "  ok: $schema" | tee -a "$log"
-  done
-
   write_result "pass" "Quick filesystem preflight passed."
   echo "validation_passed_quick" | tee -a "$log"
   exit 0

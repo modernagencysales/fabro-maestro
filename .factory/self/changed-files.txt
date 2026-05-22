@@ -1,2 +1,0 @@
-.factory/self/changed-files.txt
-.factory/self/validation.json
