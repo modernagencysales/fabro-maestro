@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FactoryReleaseReadiness",
+  "description": "Output contract for the release readiness stage. Evaluates whether a factory output is safe to merge and deploy.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decision", "release_readiness_score", "blockers_unwaived", "rollback_plan_exists", "manual_qa_steps_exist"],
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": ["pass", "fix_required", "human_review_required", "fail"],
+      "description": "pass requires score >= 4.0, no unwaived blockers, rollback plan for medium/high risk, and manual QA steps for UI changes."
+    },
+    "release_readiness_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 5,
+      "description": "Overall release readiness score. Must be >= 4.0 to pass."
+    },
+    "blockers_unwaived": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "List of unresolved blocking issues. Must be empty for decision=pass."
+    },
+    "rollback_plan_exists": {
+      "type": "boolean",
+      "description": "True if a rollback plan is documented for medium/high risk changes."
+    },
+    "manual_qa_steps_exist": {
+      "type": "boolean",
+      "description": "True if manual QA steps are documented for UI-affecting changes."
+    },
+    "migration_plan_exists": {
+      "type": "boolean",
+      "description": "True if a migration plan is documented when DB migrations are present."
+    },
+    "summary": {
+      "type": "string",
+      "description": "Short human-readable summary of release readiness state."
+    },
+    "files_changed": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of files changed in this factory run."
+    },
+    "validation_commands_passed": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Validation commands that passed (e.g. lint, typecheck, test, build)."
+    },
+    "known_risks": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Known risks documented by the release manager."
+    },
+    "deployment_notes": {
+      "type": "string",
+      "description": "Notes for the operator performing the deployment or merge."
+    }
+  }
+}
