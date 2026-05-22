@@ -773,14 +773,112 @@
     }
   },
   "web_url": "https://fabro-maestro-production.up.railway.app/runs/01KS6HRJR3E0A5FZDTJP44DGM7",
-  "start": null,
-  "status": {
-    "kind": "starting"
+  "start": {
+    "start_time": "2026-05-22T00:36:35.433866537Z",
+    "run_branch": "fabro/run/01KS6HRJR3E0A5FZDTJP44DGM7",
+    "base_sha": "e599c1bbee2206a2d1a3a64a969ac9439387d6e3"
   },
-  "status_updated_at": "2026-05-22T00:36:00.893353894Z",
-  "last_event_at": "2026-05-22T00:36:35.424889386Z",
+  "status": {
+    "kind": "running"
+  },
+  "status_updated_at": "2026-05-22T00:36:35.433885290Z",
+  "last_event_at": "2026-05-22T00:36:36.429383717Z",
   "pending_control": null,
-  "checkpoints": [],
+  "checkpoints": [
+    {
+      "seq": 21,
+      "checkpoint": {
+        "timestamp": "2026-05-22T00:36:36.429300028Z",
+        "current_node": "start",
+        "completed_nodes": [
+          "start"
+        ],
+        "node_retries": {},
+        "context_values": {
+          "graph.goal": "Improve the Fabro software factory inside modernagencysales/fabro-maestro using docs/factory/maestro-fabro-perfect-software-factory.md. Do not work on Maestro V2.",
+          "current_node": "start",
+          "internal.node_visit_count": 1,
+          "internal.retry_count.start": 0,
+          "graph.max_node_visits": "10",
+          "graph.model_stylesheet": "\n      *          { model: gpt-5-mini; reasoning_effort: medium; }\n      .coding    { model: gpt-5.3-codex; reasoning_effort: high; }\n      .architect { model: claude-sonnet-4-6; reasoning_effort: high; }\n      .critic    { model: gemini-3.1-pro-preview; reasoning_effort: high; }\n      .docs      { model: claude-haiku-4-5; reasoning_effort: none; }\n    ",
+          "graph.rankdir": "LR",
+          "graph.stall_timeout": "7200000ms",
+          "graph.default_fidelity": "summary:high",
+          "failure_signature": "",
+          "internal.run_id": "01KS6HRJR3E0A5FZDTJP44DGM7",
+          "internal.thread_id": null,
+          "internal.fidelity": "summary:high",
+          "failure_class": "",
+          "internal.work_dir": "/home/daytona/workspace",
+          "outcome": "succeeded"
+        },
+        "node_outcomes": {
+          "start": {
+            "status": "succeeded",
+            "usage": null
+          }
+        },
+        "next_node_id": "preflight",
+        "node_visits": {
+          "start": 1
+        }
+      },
+      "diff": {}
+    },
+    {
+      "seq": 0,
+      "checkpoint": {
+        "timestamp": "2026-05-22T00:36:37.789340365Z",
+        "current_node": "preflight",
+        "completed_nodes": [
+          "start",
+          "preflight"
+        ],
+        "node_retries": {},
+        "context_values": {
+          "graph.rankdir": "LR",
+          "internal.thread_id": "start",
+          "graph.goal": "Improve the Fabro software factory inside modernagencysales/fabro-maestro using docs/factory/maestro-fabro-perfect-software-factory.md. Do not work on Maestro V2.",
+          "internal.work_dir": "/home/daytona/workspace",
+          "internal.retry_count.start": 0,
+          "graph.default_fidelity": "summary:high",
+          "graph.model_stylesheet": "\n      *          { model: gpt-5-mini; reasoning_effort: medium; }\n      .coding    { model: gpt-5.3-codex; reasoning_effort: high; }\n      .architect { model: claude-sonnet-4-6; reasoning_effort: high; }\n      .critic    { model: gemini-3.1-pro-preview; reasoning_effort: high; }\n      .docs      { model: claude-haiku-4-5; reasoning_effort: none; }\n    ",
+          "outcome": "succeeded",
+          "internal.node_visit_count": 1,
+          "internal.fidelity": "summary:high",
+          "command.output": "blob://sha256/fc545250e002ada76972c6da04cb97c2a520b209764b904aad815004a03213f2",
+          "thread.start.current_node": "preflight",
+          "internal.run_id": "01KS6HRJR3E0A5FZDTJP44DGM7",
+          "internal.retry_count.preflight": 0,
+          "failure_class": "",
+          "graph.max_node_visits": "10",
+          "graph.stall_timeout": "7200000ms",
+          "current_node": "preflight",
+          "failure_signature": ""
+        },
+        "node_outcomes": {
+          "preflight": {
+            "status": "succeeded",
+            "context_updates": {
+              "command.output": "blob://sha256/fc545250e002ada76972c6da04cb97c2a520b209764b904aad815004a03213f2"
+            },
+            "notes": "Script completed: set -euo pipefail; remote=$(git remote get-url origin); origin_safe=$(printf '%s' \"$remote\" | sed -E 's#(https://x-access-token:)[^@]+@#\\1REDACTED@#; s#(https://)[^/@:]+:[^@]+@#\\1REDACTED@#'); echo \"origin=${origin_safe}\"; case \"$remote\" in *modernagencysales/fabro-maestro*|*fabro-sh/fabro*) ;; *) echo \"FAIL: expected fabro-maestro/fabro origin\"; exit 1;; esac; test -f docs/factory/maestro-fabro-perfect-software-factory.md; .fabro/scripts/factory-validate.sh --quick",
+            "usage": null
+          },
+          "start": {
+            "status": "succeeded",
+            "usage": null
+          }
+        },
+        "next_node_id": "plan",
+        "node_visits": {
+          "start": 1,
+          "preflight": 1
+        }
+      },
+      "diff": {}
+    }
+  ],
   "conclusion": null,
   "sandbox": {
     "provider": "daytona",
@@ -796,5 +894,62 @@
   "pull_request": null,
   "superseded_by": null,
   "pending_interviews": {},
-  "stages": {}
+  "stages": {
+    "preflight@1": {
+      "first_event_seq": 22,
+      "prompt": null,
+      "response": null,
+      "completion": null,
+      "provider_used": null,
+      "diff": null,
+      "script_invocation": {
+        "script": "set -euo pipefail; remote=$(git remote get-url origin); origin_safe=$(printf '%s' \"$remote\" | sed -E 's#(https://x-access-token:)[^@]+@#\\1REDACTED@#; s#(https://)[^/@:]+:[^@]+@#\\1REDACTED@#'); echo \"origin=${origin_safe}\"; case \"$remote\" in *modernagencysales/fabro-maestro*|*fabro-sh/fabro*) ;; *) echo \"FAIL: expected fabro-maestro/fabro origin\"; exit 1;; esac; test -f docs/factory/maestro-fabro-perfect-software-factory.md; .fabro/scripts/factory-validate.sh --quick",
+        "command": "exec 2>&1\nset -euo pipefail; remote=$(git remote get-url origin); origin_safe=$(printf '%s' \"$remote\" | sed -E 's#(https://x-access-token:)[^@]+@#\\1REDACTED@#; s#(https://)[^/@:]+:[^@]+@#\\1REDACTED@#'); echo \"origin=${origin_safe}\"; case \"$remote\" in *modernagencysales/fabro-maestro*|*fabro-sh/fabro*) ;; *) echo \"FAIL: expected fabro-maestro/fabro origin\"; exit 1;; esac; test -f docs/factory/maestro-fabro-perfect-software-factory.md; .fabro/scripts/factory-validate.sh --quick",
+        "language": "shell"
+      },
+      "script_timing": null,
+      "parallel_results": null,
+      "output": null,
+      "started_at": "2026-05-22T00:36:36.429370602Z",
+      "handler": "command",
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "reasoning_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0
+      },
+      "state": "running"
+    },
+    "start@1": {
+      "first_event_seq": 18,
+      "prompt": null,
+      "response": null,
+      "completion": {
+        "outcome": "succeeded",
+        "notes": null,
+        "failure_reason": null,
+        "timestamp": "2026-05-22T00:36:36.429209683Z"
+      },
+      "provider_used": null,
+      "diff": null,
+      "script_invocation": null,
+      "script_timing": null,
+      "parallel_results": null,
+      "output": null,
+      "started_at": "2026-05-22T00:36:36.429144348Z",
+      "handler": "start",
+      "duration_ms": 0,
+      "usage": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "reasoning_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0
+      },
+      "state": "succeeded"
+    }
+  }
 }

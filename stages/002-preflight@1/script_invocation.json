@@ -1,0 +1,5 @@
+{
+  "script": "set -euo pipefail; remote=$(git remote get-url origin); origin_safe=$(printf '%s' \"$remote\" | sed -E 's#(https://x-access-token:)[^@]+@#\\1REDACTED@#; s#(https://)[^/@:]+:[^@]+@#\\1REDACTED@#'); echo \"origin=${origin_safe}\"; case \"$remote\" in *modernagencysales/fabro-maestro*|*fabro-sh/fabro*) ;; *) echo \"FAIL: expected fabro-maestro/fabro origin\"; exit 1;; esac; test -f docs/factory/maestro-fabro-perfect-software-factory.md; .fabro/scripts/factory-validate.sh --quick",
+  "command": "exec 2>&1\nset -euo pipefail; remote=$(git remote get-url origin); origin_safe=$(printf '%s' \"$remote\" | sed -E 's#(https://x-access-token:)[^@]+@#\\1REDACTED@#; s#(https://)[^/@:]+:[^@]+@#\\1REDACTED@#'); echo \"origin=${origin_safe}\"; case \"$remote\" in *modernagencysales/fabro-maestro*|*fabro-sh/fabro*) ;; *) echo \"FAIL: expected fabro-maestro/fabro origin\"; exit 1;; esac; test -f docs/factory/maestro-fabro-perfect-software-factory.md; .fabro/scripts/factory-validate.sh --quick",
+  "language": "shell"
+}
