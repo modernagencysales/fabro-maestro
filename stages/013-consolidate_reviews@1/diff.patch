@@ -1,0 +1,95 @@
+diff --git a/.factory/reviews/consolidated.md b/.factory/reviews/consolidated.md
+new file mode 100644
+index 000000000..157fdd775
+--- /dev/null
++++ b/.factory/reviews/consolidated.md
+@@ -0,0 +1,89 @@
++# Consolidated Review
++
++**Run ID:** 01KS6HRJR3E0A5FZDTJP44DGM7  
++**Date:** 2026-05-22  
++**Final Decision:** `fix_required`
++
++---
++
++## Summary
++
++One reviewer branch succeeded (QA). Two branches (security, architecture) failed during the parallel fan-out and produced no review artifacts. The surviving QA review identified a **HIGH** severity finding that directly nullifies the core intent of the implemented patch.
++
++---
++
++## Findings
++
++### HIGH — Schema and plan checks unreachable in full-mode validation
++
++**Reviewer:** QA  
++**File:** `.fabro/scripts/factory-validate.sh`, line 52  
++**Finding:**
++
++The new checks added in this pipeline run — eval schema presence/validity assertions and the `.factory/self/plan.md` artifact check — are located inside the `if [[ "$mode" == "--quick" ... ]]` conditional block, which terminates with `exit 0`. The `validate` workflow node executes `factory-validate.sh` without `--quick` (i.e., full mode), which means it takes a completely different code path and **never reaches these new checks**.
++
++**Impact:** The implementation's stated goal — "assert plan artifact presence in the implement → validate path" — is not achieved. Full-mode validation passes unconditionally without verifying that plan.md or any eval schemas are present. The quick-mode checks pass correctly, but they are only triggered by the `preflight` stage (which bypasses plan.md via `FACTORY_VALIDATE_ALLOW_MISSING_PLAN=1`) — not by the post-implement `validate` stage.
++
++**Required fix:**  
++Move the eval schema existence/validity checks and the plan artifact check outside of the `--quick` conditional block so they execute in both modes. Keep `exit 0` gated to `--quick` only so the quick path still short-circuits after those checks. Specifically:
++
++```bash
++# After the mode/log setup block, before the --quick exit:
++# 1. Check plan artifact (unless FACTORY_VALIDATE_ALLOW_MISSING_PLAN=1)
++# 2. Check all 6 required eval schemas exist and are valid JSON
++# Then: if --quick, exit 0; else continue with full workflow/cargo/bun checks
++```
++
++**Files requiring follow-up:**
++- `.fabro/scripts/factory-validate.sh`
++
++---
++
++### INFO — Missing reviewer branches
++
++**Branches:** `security_review`, `architecture_review`  
++**Status:** Both failed during parallel fan-out; no review artifacts were written.  
++**Impact:** Security and architecture dimensions were not evaluated for this pipeline run. This is a process gap (not a code defect from the current implementation), consistent with the known Gap 6 from the plan (scope-guard doesn't verify reviewer output files were written).  
++**No immediate fix required** for this run; tracked as Gap 6 in `.factory/self/plan.md`.
++
++---
++
++## Validation Evidence
++
++From `.factory/self/validation.json`:
++```json
++{
++  "decision": "pass",
++  "mode": "full",
++  "note": "Full factory validation passed."
++}
++```
++
++From scope guard (`.factory/self/scope-guard.json`):
++```json
++{
++  "decision": "pass",
++  "lines_added": 4,
++  "lines_removed": 4
++}
++```
++
++**Validation log confirms:** All 10 workflow files parsed and validated OK; cargo fmt, cargo check, and fabro-web typecheck all passed.
++
++**Note:** The full-mode validation passed precisely because the new plan/schema checks do not execute in full mode — which is itself the HIGH finding.
++
++---
++
++## Files Requiring Follow-up
++
++| File | Action |
++|------|--------|
++| `.fabro/scripts/factory-validate.sh` | Move eval schema + plan artifact checks outside `--quick` block so they run in full mode too |
++
++---
++
++## Release Recommendation
++
++**Do not release.** The HIGH finding must be fixed before merging. The implemented patch (`factory-validate.sh --quick` checks) is structurally correct but placed in the wrong code path. A minimal fix — hoisting the schema and plan checks above the `--quick` early exit — will satisfy the original implementation intent and make the finding go away. Full-mode validation must verify these artifacts for the factory's "measurable" property to hold.
++
++After fixing, re-run `factory-validate.sh` (full mode) and confirm it fails on a workspace missing `plan.md` or an eval schema, then passes with all artifacts present.
