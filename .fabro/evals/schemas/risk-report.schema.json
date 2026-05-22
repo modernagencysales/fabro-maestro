@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FactoryRiskReport",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["risk_level", "risky_surfaces", "requires_human_review"],
+  "properties": {
+    "risk_level": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "blocker"]
+    },
+    "risky_surfaces": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "requires_human_review": {
+      "type": "boolean"
+    }
+  }
+}

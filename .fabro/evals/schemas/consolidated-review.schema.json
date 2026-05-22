@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FactoryConsolidatedReview",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decision", "findings", "release_recommendation"],
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": ["pass", "fix_required", "human_review_required"]
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "review-finding.schema.json"
+      }
+    },
+    "release_recommendation": {
+      "type": "string"
+    }
+  }
+}
