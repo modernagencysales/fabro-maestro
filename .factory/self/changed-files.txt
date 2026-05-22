@@ -1,0 +1,2 @@
+.fabro/scripts/factory-validate.sh
+.fabro/workflows/factory-self-improve/workflow.fabro
