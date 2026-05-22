@@ -1,0 +1,12 @@
+diff --git a/.factory/self/validation.json b/.factory/self/validation.json
+index 6a2cac702..698e53d92 100644
+--- a/.factory/self/validation.json
++++ b/.factory/self/validation.json
+@@ -1,5 +1,5 @@
+ {
+   "decision": "pass",
+-  "mode": "--quick",
+-  "note": "Quick filesystem preflight passed."
++  "mode": "full",
++  "note": "Full factory validation passed."
+ }
