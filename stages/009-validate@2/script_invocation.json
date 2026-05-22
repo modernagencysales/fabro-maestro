@@ -1,0 +1,5 @@
+{
+  "script": ".fabro/scripts/factory-validate.sh",
+  "command": "exec 2>&1\n.fabro/scripts/factory-validate.sh",
+  "language": "shell"
+}

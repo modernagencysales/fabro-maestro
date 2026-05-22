@@ -1,0 +1,21 @@
+diff --git a/.factory/self/changed-files.txt b/.factory/self/changed-files.txt
+index e723cb4f9..316ee358f 100644
+--- a/.factory/self/changed-files.txt
++++ b/.factory/self/changed-files.txt
+@@ -1,2 +1,2 @@
+-.fabro/scripts/factory-validate.sh
+-.fabro/workflows/factory-self-improve/workflow.fabro
++.factory/self/changed-files.txt
++.factory/self/validation.json
+diff --git a/.factory/self/scope-guard.json b/.factory/self/scope-guard.json
+index 4928bb8e4..e9076604e 100644
+--- a/.factory/self/scope-guard.json
++++ b/.factory/self/scope-guard.json
+@@ -1,5 +1,5 @@
+ {
+   "decision": "pass",
+-  "lines_added": 7,
+-  "lines_removed": 1
++  "lines_added": 4,
++  "lines_removed": 4
+ }
