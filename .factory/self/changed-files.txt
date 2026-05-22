@@ -1,2 +1,2 @@
-.fabro/scripts/factory-validate.sh
-.fabro/workflows/factory-self-improve/workflow.fabro
+.factory/self/changed-files.txt
+.factory/self/validation.json
