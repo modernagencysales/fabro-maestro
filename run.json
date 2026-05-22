@@ -782,7 +782,7 @@
     "kind": "running"
   },
   "status_updated_at": "2026-05-22T00:36:35.433885290Z",
-  "last_event_at": "2026-05-22T00:36:36.429383717Z",
+  "last_event_at": "2026-05-22T00:40:02.220012094Z",
   "pending_control": null,
   "checkpoints": [
     {
@@ -826,9 +826,9 @@
       "diff": {}
     },
     {
-      "seq": 0,
+      "seq": 29,
       "checkpoint": {
-        "timestamp": "2026-05-22T00:36:37.789340365Z",
+        "timestamp": "2026-05-22T00:36:40.048863563Z",
         "current_node": "preflight",
         "completed_nodes": [
           "start",
@@ -836,25 +836,25 @@
         ],
         "node_retries": {},
         "context_values": {
-          "graph.rankdir": "LR",
-          "internal.thread_id": "start",
-          "graph.goal": "Improve the Fabro software factory inside modernagencysales/fabro-maestro using docs/factory/maestro-fabro-perfect-software-factory.md. Do not work on Maestro V2.",
-          "internal.work_dir": "/home/daytona/workspace",
-          "internal.retry_count.start": 0,
-          "graph.default_fidelity": "summary:high",
-          "graph.model_stylesheet": "\n      *          { model: gpt-5-mini; reasoning_effort: medium; }\n      .coding    { model: gpt-5.3-codex; reasoning_effort: high; }\n      .architect { model: claude-sonnet-4-6; reasoning_effort: high; }\n      .critic    { model: gemini-3.1-pro-preview; reasoning_effort: high; }\n      .docs      { model: claude-haiku-4-5; reasoning_effort: none; }\n    ",
-          "outcome": "succeeded",
-          "internal.node_visit_count": 1,
-          "internal.fidelity": "summary:high",
-          "command.output": "blob://sha256/fc545250e002ada76972c6da04cb97c2a520b209764b904aad815004a03213f2",
-          "thread.start.current_node": "preflight",
-          "internal.run_id": "01KS6HRJR3E0A5FZDTJP44DGM7",
-          "internal.retry_count.preflight": 0,
-          "failure_class": "",
           "graph.max_node_visits": "10",
-          "graph.stall_timeout": "7200000ms",
+          "thread.start.current_node": "preflight",
+          "command.output": "blob://sha256/fc545250e002ada76972c6da04cb97c2a520b209764b904aad815004a03213f2",
+          "internal.run_id": "01KS6HRJR3E0A5FZDTJP44DGM7",
+          "graph.default_fidelity": "summary:high",
+          "internal.retry_count.start": 0,
+          "graph.model_stylesheet": "\n      *          { model: gpt-5-mini; reasoning_effort: medium; }\n      .coding    { model: gpt-5.3-codex; reasoning_effort: high; }\n      .architect { model: claude-sonnet-4-6; reasoning_effort: high; }\n      .critic    { model: gemini-3.1-pro-preview; reasoning_effort: high; }\n      .docs      { model: claude-haiku-4-5; reasoning_effort: none; }\n    ",
+          "internal.thread_id": "start",
+          "internal.work_dir": "/home/daytona/workspace",
+          "graph.goal": "Improve the Fabro software factory inside modernagencysales/fabro-maestro using docs/factory/maestro-fabro-perfect-software-factory.md. Do not work on Maestro V2.",
+          "internal.fidelity": "summary:high",
+          "graph.rankdir": "LR",
+          "internal.retry_count.preflight": 0,
           "current_node": "preflight",
-          "failure_signature": ""
+          "failure_signature": "",
+          "graph.stall_timeout": "7200000ms",
+          "internal.node_visit_count": 1,
+          "failure_class": "",
+          "outcome": "succeeded"
         },
         "node_outcomes": {
           "preflight": {
@@ -871,8 +871,116 @@
           }
         },
         "next_node_id": "plan",
+        "git_commit_sha": "967d807b491a63bba03f26a520280ec7f71a451e",
         "node_visits": {
           "start": 1,
+          "preflight": 1
+        }
+      },
+      "diff": {
+        "patch": "diff --git a/.factory/self/validation.json b/.factory/self/validation.json\nnew file mode 100644\nindex 000000000..6a2cac702\n--- /dev/null\n+++ b/.factory/self/validation.json\n@@ -0,0 +1,5 @@\n+{\n+  \"decision\": \"pass\",\n+  \"mode\": \"--quick\",\n+  \"note\": \"Quick filesystem preflight passed.\"\n+}\n",
+        "summary": {
+          "files_changed": 1,
+          "additions": 5,
+          "deletions": 0
+        }
+      }
+    },
+    {
+      "seq": 0,
+      "checkpoint": {
+        "timestamp": "2026-05-22T00:40:02.309227233Z",
+        "current_node": "plan",
+        "completed_nodes": [
+          "start",
+          "preflight",
+          "plan"
+        ],
+        "node_retries": {},
+        "context_values": {
+          "graph.rankdir": "LR",
+          "internal.retry_count.plan": 0,
+          "internal.thread_id": "architect",
+          "last_response": "All three patches applied and validated. Here is the full plan summary:\n\n---\n\n## Plan Summary\n\n### Current Factory Gaps (8 identified)\n\n| # | Gap | Severity |\n|---|-----|----------|\n| 1 | Missing `spe",
+          "graph.goal": "Improve the Fabro software factory inside modernagencysales/fabro-maestro using docs/factory/maestro-fabro-perfect-software-factory.md. Do not work on Maestro V2.",
+          "internal.work_dir": "/home/daytona/workspace",
+          "internal.retry_count.start": 0,
+          "graph.default_fidelity": "summary:high",
+          "graph.model_stylesheet": "\n      *          { model: gpt-5-mini; reasoning_effort: medium; }\n      .coding    { model: gpt-5.3-codex; reasoning_effort: high; }\n      .architect { model: claude-sonnet-4-6; reasoning_effort: high; }\n      .critic    { model: gemini-3.1-pro-preview; reasoning_effort: high; }\n      .docs      { model: claude-haiku-4-5; reasoning_effort: none; }\n    ",
+          "outcome": "succeeded",
+          "internal.node_visit_count": 1,
+          "internal.fidelity": "summary:high",
+          "command.output": "blob://sha256/fc545250e002ada76972c6da04cb97c2a520b209764b904aad815004a03213f2",
+          "thread.start.current_node": "preflight",
+          "internal.run_id": "01KS6HRJR3E0A5FZDTJP44DGM7",
+          "internal.retry_count.preflight": 0,
+          "last_stage": "plan",
+          "failure_class": "",
+          "response.plan": "All three patches applied and validated. Here is the full plan summary:\n\n---\n\n## Plan Summary\n\n### Current Factory Gaps (8 identified)\n\n| # | Gap | Severity |\n|---|-----|----------|\n| 1 | Missing `spec-eval.schema.json` and `release-readiness.schema.json` | HIGH |\n| 2 | `factory-validate.sh --quick` doesn't check eval schemas exist/are valid JSON | HIGH |\n| 3 | Planner prompt has no explicit output contract (goal gate fires on any output) | MEDIUM |\n| 4 | No `factory-retro.schema.json` or `maestro-retro.fabro` workflow | MEDIUM |\n| 5 | `workflow.toml` has hardcoded local `/Users/ajmal/...` path | LOW |\n| 6 | Scope guard doesn't verify reviewer output files were actually written | MEDIUM |\n| 7 | Missing migration/performance/observability reviewer prompts (3 of 6) | LOW |\n| 8 | No `detect-risk-surfaces.sh` script (used by risk classifier + scope guard) | LOW |\n\n---\n\n### Three Patches Implemented\n\n**Patch 1 — Added two missing eval schemas**  \nCreated `.fabro/evals/schemas/spec-eval.schema.json` and `.fabro/evals/schemas/release-readiness.schema.json` from the design spec's §12.2 and §12.8 contracts. These define machine-checkable output contracts for the spec evaluator (8 scoring dimensions, overall_score ≥ 4.0 to pass) and the release readiness stage (blockers, rollback plan, manual QA steps). Factory now has 6 complete eval schemas.\n\n**Patch 2 — Wired schema presence+validity into `factory-validate.sh --quick`**  \nAdded an \"eval schema checks\" block to the quick preflight path. It asserts all 6 required schemas exist and are valid JSON (using Python's `json.load`). Any missing or malformed schema now causes a hard preflight failure, so silent schema drift is caught before the implement stage begins.\n\n**Patch 3 — Strengthened planner prompt + removed hardcoded local path**  \nThe planner prompt now specifies four required sections (`## Current Factory Gaps`, `## First Three Patches`, `## Validation Commands`, `## Risks and Guardrails`) with explicit content rules. The `goal_gate=true` on the plan node now has structural meaning. Separately, the hardcoded `working_dir = \"/Users/ajmal/Maestro/fabro-maestro\"` was removed from `workflow.toml` — it was a developer-local artefact that was ignored by Daytona but confusing to read.\n\n**Validation:** `.fabro/scripts/factory-validate.sh --quick` passes with all 6 schemas confirmed valid.",
+          "thread.architect.current_node": "plan",
+          "graph.max_node_visits": "10",
+          "graph.stall_timeout": "7200000ms",
+          "current_node": "plan",
+          "failure_signature": ""
+        },
+        "node_outcomes": {
+          "plan": {
+            "status": "succeeded",
+            "context_updates": {
+              "last_response": "All three patches applied and validated. Here is the full plan summary:\n\n---\n\n## Plan Summary\n\n### Current Factory Gaps (8 identified)\n\n| # | Gap | Severity |\n|---|-----|----------|\n| 1 | Missing `spe",
+              "last_stage": "plan",
+              "response.plan": "All three patches applied and validated. Here is the full plan summary:\n\n---\n\n## Plan Summary\n\n### Current Factory Gaps (8 identified)\n\n| # | Gap | Severity |\n|---|-----|----------|\n| 1 | Missing `spec-eval.schema.json` and `release-readiness.schema.json` | HIGH |\n| 2 | `factory-validate.sh --quick` doesn't check eval schemas exist/are valid JSON | HIGH |\n| 3 | Planner prompt has no explicit output contract (goal gate fires on any output) | MEDIUM |\n| 4 | No `factory-retro.schema.json` or `maestro-retro.fabro` workflow | MEDIUM |\n| 5 | `workflow.toml` has hardcoded local `/Users/ajmal/...` path | LOW |\n| 6 | Scope guard doesn't verify reviewer output files were actually written | MEDIUM |\n| 7 | Missing migration/performance/observability reviewer prompts (3 of 6) | LOW |\n| 8 | No `detect-risk-surfaces.sh` script (used by risk classifier + scope guard) | LOW |\n\n---\n\n### Three Patches Implemented\n\n**Patch 1 — Added two missing eval schemas**  \nCreated `.fabro/evals/schemas/spec-eval.schema.json` and `.fabro/evals/schemas/release-readiness.schema.json` from the design spec's §12.2 and §12.8 contracts. These define machine-checkable output contracts for the spec evaluator (8 scoring dimensions, overall_score ≥ 4.0 to pass) and the release readiness stage (blockers, rollback plan, manual QA steps). Factory now has 6 complete eval schemas.\n\n**Patch 2 — Wired schema presence+validity into `factory-validate.sh --quick`**  \nAdded an \"eval schema checks\" block to the quick preflight path. It asserts all 6 required schemas exist and are valid JSON (using Python's `json.load`). Any missing or malformed schema now causes a hard preflight failure, so silent schema drift is caught before the implement stage begins.\n\n**Patch 3 — Strengthened planner prompt + removed hardcoded local path**  \nThe planner prompt now specifies four required sections (`## Current Factory Gaps`, `## First Three Patches`, `## Validation Commands`, `## Risks and Guardrails`) with explicit content rules. The `goal_gate=true` on the plan node now has structural meaning. Separately, the hardcoded `working_dir = \"/Users/ajmal/Maestro/fabro-maestro\"` was removed from `workflow.toml` — it was a developer-local artefact that was ignored by Daytona but confusing to read.\n\n**Validation:** `.fabro/scripts/factory-validate.sh --quick` passes with all 6 schemas confirmed valid."
+            },
+            "notes": "Stage completed: plan",
+            "usage": {
+              "input": {
+                "usage": {
+                  "model": {
+                    "provider": "anthropic",
+                    "model_id": "claude-sonnet-4-6"
+                  },
+                  "tokens": {
+                    "input_tokens": 49389,
+                    "output_tokens": 10428,
+                    "reasoning_tokens": 0,
+                    "cache_read_tokens": 1054184,
+                    "cache_write_tokens": 57243
+                  }
+                },
+                "facts": {
+                  "provider": "anthropic",
+                  "cache_write_5m_tokens": 57243,
+                  "cache_write_1h_tokens": 0
+                }
+              },
+              "total_usd_micros": 835503
+            },
+            "files_touched": [
+              "/home/daytona/workspace/.fabro/evals/schemas/release-readiness.schema.json",
+              "/home/daytona/workspace/.fabro/evals/schemas/spec-eval.schema.json",
+              "/home/daytona/workspace/.fabro/prompts/factory/planner.md",
+              "/home/daytona/workspace/.fabro/scripts/factory-validate.sh",
+              "/home/daytona/workspace/.fabro/workflows/factory-self-improve/workflow.toml",
+              "/home/daytona/workspace/.factory/self/plan.md"
+            ]
+          },
+          "start": {
+            "status": "succeeded",
+            "usage": null
+          },
+          "preflight": {
+            "status": "succeeded",
+            "context_updates": {
+              "command.output": "blob://sha256/fc545250e002ada76972c6da04cb97c2a520b209764b904aad815004a03213f2"
+            },
+            "notes": "Script completed: set -euo pipefail; remote=$(git remote get-url origin); origin_safe=$(printf '%s' \"$remote\" | sed -E 's#(https://x-access-token:)[^@]+@#\\1REDACTED@#; s#(https://)[^/@:]+:[^@]+@#\\1REDACTED@#'); echo \"origin=${origin_safe}\"; case \"$remote\" in *modernagencysales/fabro-maestro*|*fabro-sh/fabro*) ;; *) echo \"FAIL: expected fabro-maestro/fabro origin\"; exit 1;; esac; test -f docs/factory/maestro-fabro-perfect-software-factory.md; .fabro/scripts/factory-validate.sh --quick",
+            "usage": null
+          }
+        },
+        "next_node_id": "implement",
+        "node_visits": {
+          "start": 1,
+          "plan": 1,
           "preflight": 1
         }
       },
@@ -899,7 +1007,12 @@
       "first_event_seq": 22,
       "prompt": null,
       "response": null,
-      "completion": null,
+      "completion": {
+        "outcome": "succeeded",
+        "notes": "Script completed: set -euo pipefail; remote=$(git remote get-url origin); origin_safe=$(printf '%s' \"$remote\" | sed -E 's#(https://x-access-token:)[^@]+@#\\1REDACTED@#; s#(https://)[^/@:]+:[^@]+@#\\1REDACTED@#'); echo \"origin=${origin_safe}\"; case \"$remote\" in *modernagencysales/fabro-maestro*|*fabro-sh/fabro*) ;; *) echo \"FAIL: expected fabro-maestro/fabro origin\"; exit 1;; esac; test -f docs/factory/maestro-fabro-perfect-software-factory.md; .fabro/scripts/factory-validate.sh --quick",
+        "failure_reason": null,
+        "timestamp": "2026-05-22T00:36:37.788412443Z"
+      },
       "provider_used": null,
       "diff": null,
       "script_invocation": {
@@ -907,11 +1020,22 @@
         "command": "exec 2>&1\nset -euo pipefail; remote=$(git remote get-url origin); origin_safe=$(printf '%s' \"$remote\" | sed -E 's#(https://x-access-token:)[^@]+@#\\1REDACTED@#; s#(https://)[^/@:]+:[^@]+@#\\1REDACTED@#'); echo \"origin=${origin_safe}\"; case \"$remote\" in *modernagencysales/fabro-maestro*|*fabro-sh/fabro*) ;; *) echo \"FAIL: expected fabro-maestro/fabro origin\"; exit 1;; esac; test -f docs/factory/maestro-fabro-perfect-software-factory.md; .fabro/scripts/factory-validate.sh --quick",
         "language": "shell"
       },
-      "script_timing": null,
+      "script_timing": {
+        "output": "blob://sha256/fc545250e002ada76972c6da04cb97c2a520b209764b904aad815004a03213f2",
+        "exit_code": 0,
+        "duration_ms": 1353,
+        "termination": "exited",
+        "output_bytes": 200,
+        "live_streaming": true
+      },
       "parallel_results": null,
       "output": null,
+      "output_bytes": 200,
+      "live_streaming": true,
+      "termination": "exited",
       "started_at": "2026-05-22T00:36:36.429370602Z",
       "handler": "command",
+      "duration_ms": 1358,
       "usage": {
         "input_tokens": 0,
         "output_tokens": 0,
@@ -920,7 +1044,7 @@
         "cache_read_tokens": 0,
         "cache_write_tokens": 0
       },
-      "state": "running"
+      "state": "succeeded"
     },
     "start@1": {
       "first_event_seq": 18,
@@ -950,6 +1074,38 @@
         "cache_write_tokens": 0
       },
       "state": "succeeded"
+    },
+    "plan@1": {
+      "first_event_seq": 32,
+      "prompt": null,
+      "response": null,
+      "completion": null,
+      "provider_used": {
+        "mode": "agent",
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-6"
+      },
+      "diff": null,
+      "script_invocation": null,
+      "script_timing": null,
+      "parallel_results": null,
+      "output": null,
+      "started_at": "2026-05-22T00:36:40.050113319Z",
+      "handler": "agent",
+      "usage": {
+        "input_tokens": 49389,
+        "output_tokens": 10428,
+        "total_tokens": 1171244,
+        "reasoning_tokens": 0,
+        "cache_read_tokens": 1054184,
+        "cache_write_tokens": 57243,
+        "total_usd_micros": 835503
+      },
+      "model": {
+        "provider": "anthropic",
+        "model_id": "claude-sonnet-4-6"
+      },
+      "state": "running"
     }
   }
 }

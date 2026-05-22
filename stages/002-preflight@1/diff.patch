@@ -1,0 +1,11 @@
+diff --git a/.factory/self/validation.json b/.factory/self/validation.json
+new file mode 100644
+index 000000000..6a2cac702
+--- /dev/null
++++ b/.factory/self/validation.json
+@@ -0,0 +1,5 @@
++{
++  "decision": "pass",
++  "mode": "--quick",
++  "note": "Quick filesystem preflight passed."
++}
