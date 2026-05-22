@@ -10,7 +10,7 @@ digraph FactorySelfImprove {
       .coding    { model: gpt-5.3-codex; reasoning_effort: high; }
       .architect { model: claude-sonnet-4-6; reasoning_effort: high; }
       .critic    { model: gemini-3.1-pro-preview; reasoning_effort: high; }
-      .docs      { model: claude-haiku-4-5; reasoning_effort: none; }
+      .docs      { model: claude-haiku-4-5; reasoning_effort: medium; }
     "
   ]
 
@@ -21,8 +21,7 @@ digraph FactorySelfImprove {
     label="Factory Preflight",
     shape=parallelogram,
     goal_gate=true,
-    retry_target="implement",
-    script="set -euo pipefail; remote=$(git remote get-url origin); origin_safe=$(printf '%s' \"$remote\" | sed -E 's#(https://x-access-token:)[^@]+@#\\1REDACTED@#; s#(https://)[^/@:]+:[^@]+@#\\1REDACTED@#'); echo \"origin=${origin_safe}\"; case \"$remote\" in *modernagencysales/fabro-maestro*|*fabro-sh/fabro*) ;; *) echo \"FAIL: expected fabro-maestro/fabro origin\"; exit 1;; esac; test -f docs/factory/maestro-fabro-perfect-software-factory.md; .fabro/scripts/factory-validate.sh --quick"
+    script="set -euo pipefail; remote=$(git remote get-url origin); echo \"origin=${remote}\"; case \"$remote\" in *modernagencysales/fabro-maestro*|*fabro-sh/fabro*) ;; *) echo \"FAIL: expected fabro-maestro/fabro origin\"; exit 1;; esac; test -f docs/factory/maestro-fabro-perfect-software-factory.md; .fabro/scripts/factory-validate.sh --quick"
   ]
 
   plan [
@@ -30,8 +29,7 @@ digraph FactorySelfImprove {
     class="architect",
     fidelity="summary:high",
     prompt="@../../prompts/factory/planner.md",
-    goal_gate=true,
-    retry_target="plan"
+    goal_gate=true
   ]
 
   implement [
@@ -46,7 +44,6 @@ digraph FactorySelfImprove {
     label="Scope Guard",
     shape=parallelogram,
     goal_gate=true,
-    retry_target="implement",
     script=".fabro/scripts/factory-scope-guard.sh"
   ]
 
@@ -88,57 +85,24 @@ digraph FactorySelfImprove {
     prompt="@../../prompts/factory/architecture-reviewer.md"
   ]
 
-  review_fanout [
-    label="Parallel Review Fan-out",
-    shape=component,
-    join_policy="wait_all",
-    max_parallel=3
-  ]
-
-  merge_reviews [shape=tripleoctagon, label="Merge Review Results"]
-
-  consolidate_reviews [
-    label="Consolidate Reviews",
-    class="architect",
-    fidelity="summary:high",
-    prompt="@../../prompts/factory/consolidate-reviews.md",
-    goal_gate=true,
-    retry_target="fix_review_findings"
-  ]
-
-  fix_review_findings [
-    label="Fix Review Findings",
-    class="coding",
-    fidelity="full",
-    thread_id="factory-implementation",
-    max_visits=2,
-    prompt="Read .factory/reviews/consolidated.md and fix only BLOCKER/HIGH factory findings. Do not edit Maestro V2. Re-run .fabro/scripts/factory-validate.sh --quick."
-  ]
-
   release_notes [
     label="Release Notes",
     class="docs",
     fidelity="summary:medium",
-    prompt="@../../prompts/factory/release.md"
+    prompt="@../../prompts/factory/release.md",
+    goal_gate=true
   ]
 
   open_pr [
     label="Commit Push PR",
     shape=parallelogram,
-    script="set -euo pipefail; find .factory -name '*.log' -delete 2>/dev/null || true; git status --short; git add -A; git reset -- .factory/self/validation.log 2>/dev/null || true; git -c user.email=ajmal@maestrogtm.com -c user.name=ajmal commit -m \"feat(factory): improve self-building factory\" || echo \"No uncommitted changes\"; branch=$(git branch --show-current); git push -u origin HEAD; repo_path=$(git remote get-url origin | sed -E 's#.*github.com[:/]([^/]+/[^/.]+)(\\.git)?$#\\1#'); body=.factory/release/release.md; test -f \"$body\" || body=README.md; if command -v gh >/dev/null 2>&1; then existing=$(gh pr list --repo \"$repo_path\" --head \"$branch\" --json url --jq '.[0].url' 2>/tmp/factory-pr.err || true); if [ -n \"$existing\" ]; then echo \"$existing\"; elif gh pr create --repo \"$repo_path\" --base main --head \"$branch\" --title \"feat(factory): improve self-building factory\" --body-file \"$body\" --draft; then true; else cat /tmp/factory-pr.err 2>/dev/null || true; echo \"WARN: PR helper failed after branch push; babysitter can create/link PR.\"; fi; else echo \"WARN: gh missing after branch push; babysitter can create/link PR.\"; fi"
+    goal_gate=true,
+    script="set -euo pipefail; git status --short; git add -A; git -c user.email=ajmal@maestrogtm.com -c user.name=ajmal commit -m \"feat(factory): improve self-building factory\" || echo \"No uncommitted changes\"; branch=$(git branch --show-current); git push -u origin HEAD; body=.factory/release/release.md; test -f \"$body\" || body=README.md; if command -v gh >/dev/null 2>&1; then existing=$(gh pr list --repo modernagencysales/fabro-maestro --head \"$branch\" --json url --jq '.[0].url' 2>/tmp/factory-pr.err || true); if [ -n \"$existing\" ]; then echo \"$existing\"; elif gh pr create --repo modernagencysales/fabro-maestro --base main --head \"$branch\" --title \"feat(factory): improve self-building factory\" --body-file \"$body\" --draft; then true; else cat /tmp/factory-pr.err 2>/dev/null || true; echo \"WARN: PR helper failed after branch push; babysitter can create/link PR.\"; fi; else echo \"WARN: gh missing after branch push; babysitter can create/link PR.\"; fi"
   ]
 
   start -> preflight -> plan -> implement -> scope_guard -> validate
+  validate -> qa_review
   validate -> fix_validation [condition="outcome=failed"]
   fix_validation -> scope_guard
-  validate -> review_fanout
-  review_fanout -> qa_review
-  review_fanout -> security_review
-  review_fanout -> architecture_review
-  qa_review -> merge_reviews
-  security_review -> merge_reviews
-  architecture_review -> merge_reviews
-  merge_reviews -> consolidate_reviews -> release_notes -> open_pr -> exit
-  consolidate_reviews -> fix_review_findings [condition="outcome=failed"]
-  fix_review_findings -> scope_guard
+  qa_review -> security_review -> architecture_review -> release_notes -> open_pr -> exit
 }

@@ -2,11 +2,6 @@
 
 Review factory changes only.
 
-Read:
-- `.fabro/prompts/shared/factory-risk-policy.md`
-- `.fabro/prompts/shared/reviewer-json-contract.md`
-- `.fabro/prompts/shared/factory-output-contracts.md`
-
 Check:
 - workflow graph validity
 - prompt path correctness

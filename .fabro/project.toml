@@ -2,7 +2,7 @@ _version = 1
 
 [run.pull_request]
 enabled = true
-draft = true
+draft = false
 
 [run.sandbox.daytona]
 auto_stop_interval = 30
