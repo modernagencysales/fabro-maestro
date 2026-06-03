@@ -1,0 +1,34 @@
+// 05 — Parallel fan-out / fan-in: run independent work concurrently, then synthesize.
+// CONCEPT:
+//   shape=component     -> PARALLEL fan-out. Each branch gets its OWN isolated context.
+//   join_policy         -> "wait_all" (default) or "first_success"
+//   shape=tripleoctagon -> MERGE fan-in. Collects branches into `parallel_results.json`
+//                          for the next node.
+// Use this when perspectives are independent (3 reviewers) — it's faster and the
+// branches can't contaminate each other.
+// RUN:  fabro run docs/teaching/examples/05-parallel-review.fabro
+digraph ParallelReview {
+    graph [goal="Multi-perspective review of the current codebase"]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare,  label="Exit"]
+
+    fork [label="Fan Out", shape=component, join_policy="wait_all"]
+
+    security     [label="Security",     shape=tab, reasoning_effort="low", prompt="Audit for secrets, injection risks, unsafe deps. Bullet findings."]
+    architecture [label="Architecture", shape=tab, reasoning_effort="low", prompt="Assess separation of concerns, dependency structure, modularity. Bullet findings."]
+    quality      [label="Quality",      shape=tab, reasoning_effort="low", prompt="Check naming, dead code, test gaps, error handling. Bullet findings."]
+
+    merge  [label="Merge", shape=tripleoctagon]
+    report [label="Report", shape=tab, prompt="Synthesize the three reviews into a prioritized summary with the top 5 action items."]
+
+    start -> fork
+    fork -> security
+    fork -> architecture
+    fork -> quality
+    security     -> merge
+    architecture -> merge
+    quality      -> merge
+    merge -> report -> exit
+}

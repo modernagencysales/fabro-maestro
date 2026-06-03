@@ -1,0 +1,26 @@
+// 06b — The PARENT workflow. Plans, then DELEGATES the build to the child workflow,
+// then reviews the result.
+// CONCEPT: the house node IS the composition primitive.
+//   shape=house                       -> SUB-WORKFLOW node (launches a child engine)
+//   stack.child_workflow="<path>"     -> the child file, resolved relative to this one
+//   manager.max_cycles=50             -> safety cap on poll cycles before cancelling
+//   (optional) manager.stop_condition="context.deploy_ready=true" -> cancel child early
+// CONTEXT FLOW: child gets a CLONE of the parent context; only the DIFF it produces
+//   merges back. So `plan` writes plan.md here, the child reads it, and `review` sees
+//   everything the child created.
+// WHEN TO USE: only when you're reusing a loop across parents, or want encapsulation.
+//   For one-offs, just add more nodes to a single graph.
+// RUN:  fabro run docs/teaching/examples/06-subworkflow-parent.fabro
+digraph SubWorkflow {
+    graph [goal="Create tempconv.py (Celsius/Fahrenheit/Kelvin) with pytest tests"]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare,  label="Exit"]
+
+    plan   [label="Plan", shape=tab, prompt="List the functions, signatures, and edge cases for tempconv.py. Write the plan to plan.md."]
+    impl   [label="Implement & Test", shape=house, stack.child_workflow="06-subworkflow-child.fabro", manager.max_cycles=50]
+    review [label="Review", prompt="Read every file the child created. Run 'python3 -m pytest -v' yourself. Verify it matches plan.md and all tests pass. Write a short verdict to review.md."]
+
+    start -> plan -> impl -> review -> exit
+}

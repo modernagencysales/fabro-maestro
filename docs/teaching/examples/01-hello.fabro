@@ -1,0 +1,20 @@
+// 01 — Hello: the smallest possible workflow.
+// CONCEPT: a .fabro file is a Graphviz graph. The graph IS the program.
+//   - Exactly one start (Mdiamond) and one exit (Msquare).
+//   - A node with `prompt=` and no shape is an AGENT (LLM + tools, runs a loop).
+//   - Edges (->) are deterministic transitions.
+// RUN:  fabro validate docs/teaching/examples/01-hello.fabro
+//       fabro run      docs/teaching/examples/01-hello.fabro
+// THEN: fabro events <run-id>   # watch the deterministic event log
+//       fabro inspect <run-id>  # see stages, tokens, duration
+digraph Hello {
+    graph [goal="Add a friendly haiku to the README"]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare,  label="Exit"]
+
+    greet [label="Greet", prompt="If a README.md exists, append a short, friendly 3-line haiku about shipping software. If it does not exist, create README.md with that haiku."]
+
+    start -> greet -> exit
+}

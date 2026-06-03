@@ -1,0 +1,31 @@
+// 04 — Multi-model routing: cost/quality is a GRAPH property, not a prompt hack.
+// CONCEPT: the graph-level `model_stylesheet` assigns models with CSS-like selectors:
+//   *            -> every node (the cheap default)
+//   .coding      -> any node with class="coding"
+//   #review      -> the node whose id is `review`
+//   Route grunt work to a fast/cheap model; spend the expensive model only where it
+//   matters. This is how you keep an autonomous fleet affordable.
+// NOTE: model ids must exist on the server (`fabro model` lists them). These mirror
+//   the official multi-model demo.
+// RUN:  fabro run docs/teaching/examples/04-multi-model.fabro
+digraph MultiModel {
+    graph [
+        goal="Build and review a small TypeScript string utility",
+        model_stylesheet="
+            *        { model: claude-haiku-4-5;  reasoning_effort: low;  }
+            .coding  { model: claude-sonnet-4-5; reasoning_effort: high; }
+            #review  { model: claude-sonnet-4-5; reasoning_effort: high; }
+        "
+    ]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare,  label="Exit"]
+
+    spec      [label="Write Spec", shape=tab, prompt="Write a brief spec for a TS module with slugify, truncate, capitalize. Spec only."]
+    implement [label="Implement", class="coding", prompt="Implement the module from the spec. Write it to string-utils.ts."]
+    tests     [label="Write Tests", class="coding", prompt="Write Bun tests for the module. Write to string-utils.test.ts."]
+    review    [label="Review", shape=tab, prompt="Review implementation and tests for edge cases, type safety, correctness. Brief verdict."]
+
+    start -> spec -> implement -> tests -> review -> exit
+}

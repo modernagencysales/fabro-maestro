@@ -1,0 +1,27 @@
+// 02 — Verify loop: THE keystone pattern. Implement → test → gate → (loop on fail).
+// CONCEPT: this is what lets you walk away. The agent is non-deterministic, but the
+//   PROCESS around it is deterministic: a command node runs the real tests, a
+//   conditional gate (diamond) branches on the outcome, and failure loops back.
+//   - shape=parallelogram + script=  -> COMMAND node (runs shell in the sandbox)
+//   - shape=diamond                  -> CONDITIONAL gate
+//   - condition="outcome=succeeded"  -> took the previous (command) node's result
+//   - max_visits=5 on the Fix edge   -> bounds the loop so it can never run forever
+// RUN:  fabro run docs/teaching/examples/02-verify-loop.fabro
+// TRY:  break the loop on purpose — change the prompt to write a buggy fizzbuzz and
+//       watch Fabro detect the failing test and self-correct.
+digraph VerifyLoop {
+    graph [goal="Create fizzbuzz.py that passes its pytest suite"]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare,  label="Exit"]
+
+    plan      [label="Plan",      shape=tab, reasoning_effort="low", prompt="Plan fizzbuzz.py and test_fizzbuzz.py (pytest). Describe the functions and a few test cases. Do not write files yet."]
+    implement [label="Implement", prompt="Create fizzbuzz.py and test_fizzbuzz.py exactly as planned. Write both files to disk."]
+    validate  [label="Run Tests", shape=parallelogram, script="python3 -m pytest test_fizzbuzz.py -v 2>&1 || true"]
+    gate      [label="Tests passing?", shape=diamond]
+
+    start -> plan -> implement -> validate -> gate
+    gate -> exit      [label="Pass", condition="outcome=succeeded"]
+    gate -> implement [label="Fix",  max_visits=5]
+}

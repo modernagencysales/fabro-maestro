@@ -1,0 +1,26 @@
+// 03 — Human gate: pause for a person to decide.
+// CONCEPT: a hexagon node stops the run and waits. The OUTGOING EDGE LABELS are
+//   the choices. The "[A]" / "[S]" prefixes are the hotkeys shown in the CLI menu.
+//   In the web UI it renders as buttons; from Claude Code you answer it with the
+//   `fabro_run_interact` MCP tool. Use human gates for irreversible / judgment calls.
+// RUN:  fabro run docs/teaching/examples/03-human-gate.fabro
+//   -> the run will PAUSE at "Approve changes?" — answer it in the web UI, with
+//      `fabro resume`, or by asking Claude to call fabro_run_interact.
+digraph HumanGate {
+    graph [goal="Propose a README improvement, then apply it only if approved"]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare,  label="Exit"]
+
+    draft   [label="Draft Proposal", shape=tab, prompt="Read README.md (or note its absence). Propose ONE specific improvement and describe it clearly. Do NOT make any changes yet."]
+    approve [label="Approve changes?", shape=hexagon]
+    apply   [label="Apply", prompt="Apply the README change that was approved."]
+    skip    [label="Skip", shape=tab, reasoning_effort="low", prompt="Acknowledged — no changes made. Briefly say why a human might skip."]
+
+    start -> draft -> approve
+    approve -> apply [label="[A] Approve"]
+    approve -> skip  [label="[S] Skip"]
+    apply -> exit
+    skip  -> exit
+}

@@ -1,0 +1,43 @@
+// 07 — CAPSTONE (Maestro-flavored): everything in one graph.
+// Draft a cold email -> lint it against house rules -> loop until it passes ->
+// human approves -> "ship" it. Shows, in one workflow:
+//   - model routing (cheap default, Sonnet for the draft + nothing else here)
+//   - agent node (draft, writes a file)
+//   - command/verify node (lint rules)
+//   - conditional gate that LOOPS on failure, bounded by max_visits
+//   - branching on command OUTPUT (context.command.output contains ...) — a robust
+//     alternative to `outcome=succeeded` when a command uses `|| true` style logic
+//   - human gate (approve / revise)
+//   - goal_gate=true on the final step (the run FAILS if "ship" doesn't succeed)
+// RUN:  fabro run docs/teaching/examples/07-capstone-cold-email.fabro
+//   The run pauses at "Approve to send?" — answer in the web UI or via fabro_run_interact.
+digraph ColdEmailFactory {
+    graph [
+        goal="Draft a cold email that passes house style rules, then ship it on approval",
+        model_stylesheet="
+            *       { model: claude-haiku-4-5;  reasoning_effort: low;  }
+            #draft  { model: claude-sonnet-4-5; reasoning_effort: high; }
+        "
+    ]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare,  label="Exit"]
+
+    draft [label="Draft Email", prompt="Write a cold email to a B2B agency owner offering a free GTM teardown. Rules: under 120 words, exactly one clear CTA, plain language, and NO clichés (no 'circle back', 'synergy', 'game-changer', 'hope this email finds you', 'leverage'). Write the email to cold-email.txt. If revising, read the prior lint output and fix the flagged issue."]
+
+    lint [label="Lint Rules", shape=parallelogram, script="if grep -qiE 'circle back|synergy|game.?changer|hope this email finds you|leverage' cold-email.txt; then echo RULESFAIL cliche-found; else echo RULESPASS; fi"]
+
+    gate    [label="Passes rules?", shape=diamond]
+    approve [label="Approve to send?", shape=hexagon]
+    ship    [label="Ship", shape=parallelogram, goal_gate=true, script="echo '--- sending cold-email.txt ---'; cat cold-email.txt"]
+
+    start -> draft -> lint -> gate
+    gate -> approve [label="Pass", condition="context.command.output contains RULESPASS"]
+    gate -> draft   [label="Revise", max_visits=4]
+
+    approve -> ship  [label="[A] Approve & send"]
+    approve -> draft [label="[R] Revise"]
+
+    ship -> exit
+}
